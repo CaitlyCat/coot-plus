@@ -189,10 +189,6 @@
           <attribute name="label" translatable="no">Sort Chains...</attribute>
           <attribute name="action">app.edit_sort_chains_action</attribute>
         </item>
-        <item>
-          <attribute name="label">Merge Water Chains...</attribute>
-          <attribute name="action">app.merge_solvent_chains_action</attribute>
-        </item>
       </section>
       <section>
         <attribute name="label">Molecules</attribute>
@@ -422,28 +418,9 @@
           <attribute name="action">app.backrub_rotamers_for_chain_action</attribute>
         </item>
         <item>
-          <attribute name="label">Rebuild Fragment using DBLoop (Small)</attribute>
-          <attribute name="action">app.rebuild_fragment_using_dbloop_action_small</attribute>
-        </item>
-        <item>
-          <attribute name="label">Rebuild Fragment using DBLoop (Bigger)</attribute>
-          <attribute name="action">app.rebuild_fragment_using_dbloop_action_bigger</attribute>
-        </item>
-        <item>
           <attribute name="label">Place Helix Here</attribute>
           <attribute name="action">app.place_helix_here_action</attribute>
         </item>
-        <submenu>
-          <attribute name="label">Find Secondary Structure in Map...</attribute>
-          <item>
-            <attribute name="label">Find Helices</attribute>
-            <attribute name="action">app.find_helices_in_map_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Find Strands</attribute>
-            <attribute name="action">app.find_strands_in_map_action</attribute>
-          </item>
-        </submenu>
         <item>
           <attribute name="label">DNA/RNA Models...</attribute>
           <attribute name="action">app.dna_rna_models_action</attribute>
@@ -920,14 +897,6 @@
       </section>
       <section>
         <attribute name="label">Other</attribute>
-        <item>
-          <attribute name="label">Alignment vs Reference PIR</attribute>
-          <attribute name="action">app.alignment_vs_pir_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Refmac Log Validation</attribute>
-          <attribute name="action">app.refmac_log_validation_action</attribute>
-        </item>
       </section>
     </submenu>
     <submenu>
