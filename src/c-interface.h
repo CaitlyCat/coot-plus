@@ -1804,6 +1804,13 @@ int get_trackpad_drag_rotates();
 /*! \brief Coot+: 1: double-clicking an atom centres on it, 0: it labels the atom (Coot's default) */
 void set_double_click_centres(int state);
 int get_double_click_centres();
+/*! \brief Coot+ ruler: a 3D measuring line not attached to any molecule. 1: show it, 0: hide it */
+void set_coot_plus_ruler(int state);
+int get_coot_plus_ruler();
+/*! \brief Coot+ ruler: its length in Angstroms */
+float coot_plus_ruler_distance();
+/*! \brief Coot+ ruler: put its ends at these two points */
+void set_coot_plus_ruler_ends(float x1, float y1, float z1, float x2, float y2, float z2);
 /*! \brief save previous colour map for molecule number imol
 
   (used so that the map colour can be restored on Cancel) */

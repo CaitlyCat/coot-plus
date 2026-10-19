@@ -644,6 +644,7 @@ libcootsumo_la_SOURCES = \
 	graphics-info-defines.cc \
 	graphics-info-defines-gtk4.cc \
 	graphics-info-draw.cc    \
+	coot-plus-ruler.cc coot-plus-ruler.hh \
 	graphics-info-draw-utils.cc \
 	graphics-info-draw-models.cc \
 	graphics-info-enums.hh \

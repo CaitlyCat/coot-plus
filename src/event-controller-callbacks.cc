@@ -31,6 +31,7 @@
 #include "utils/logging.hh"
 #include "geometry/residue-and-atom-specs.hh"
 #include "graphics-info.h"
+#include "coot-plus-ruler.hh" // COOT+ hook
 
 extern logging logger;
 
@@ -62,6 +63,8 @@ graphics_info_t::on_glarea_drag_begin_primary(GtkGestureDrag *gesture, double x,
    drag_begin_y = y;
    // 2022 code
    set_mouse_previous_position(x,y);
+
+   if (coot_plus_ruler_drag_begin(x, y)) return; // COOT+ hook: grabbed an end of the ruler
 
    // pick_info nearest_atom_index_info = atom_pick_gtk3(false);
 
@@ -126,6 +129,9 @@ void
 graphics_info_t::on_glarea_drag_update_primary(GtkGestureDrag *gesture,
                                                double drag_delta_x, double drag_delta_y,
                                                GtkWidget *gl_area) {
+
+   // COOT+ hook: dragging an end of the ruler
+   if (coot_plus_ruler_drag_update(drag_begin_x + drag_delta_x, drag_begin_y + drag_delta_y)) return;
 
    auto do_view_rotation = [gl_area] (double delta_x, double delta_y) {
       GtkAllocation allocation;
@@ -327,6 +333,12 @@ graphics_info_t::on_glarea_drag_end_primary(G_GNUC_UNUSED GtkGestureDrag *gestur
    double xx = drag_begin_x + x;
    double yy = drag_begin_y + y;
    bool hud_clicked = check_if_hud_button_clicked(xx, yy);
+
+   // COOT+ hook: let go of the ruler, or a click moves its nearer end
+   if (!hud_clicked && coot_plus_ruler_drag_end(xx, yy, std::abs(x) + std::abs(y) < 3.0)) {
+      translation_gizmo_is_being_dragged = false;
+      return;
+   }
 
    if (!hud_clicked) {
       if (last_restraints_size() > 0) {
@@ -586,7 +598,8 @@ graphics_info_t::on_glarea_click(GtkGestureClick *controller,
 
          // n_press can go up to 20, 30...
          //
-         if (n_press == 2) { // otherwise triple clicking would toggle the label off, we don't want that.
+         // COOT+ hook: no double-click jump while the ruler is on (placing its ends is clicking)
+         if (n_press == 2 && !coot_plus_ruler_is_on()) { // otherwise triple clicking would toggle the label off, we don't want that.
 
             bool handled = false;
 

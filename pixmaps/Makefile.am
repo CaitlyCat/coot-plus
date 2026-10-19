@@ -111,6 +111,7 @@ endif
 # Coot+ interface icons (symbolic: recoloured to the theme)
 dist_cootpixmap_DATA += \
 	coot-plus-build-symbolic.svg \
+	coot-plus-tool-ruler-symbolic.svg \
 	coot-plus-tool-radius-larger-symbolic.svg \
 	coot-plus-tool-radius-smaller-symbolic.svg \
 	coot-plus-tool-save-state-symbolic.svg \

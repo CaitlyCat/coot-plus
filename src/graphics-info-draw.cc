@@ -25,6 +25,7 @@
  */
 
 #include "stereo-eye.hh"
+#include "coot-plus-ruler.hh" // COOT+ hook
 #ifdef USE_PYTHON
 #include <Python.h>
 #endif // USE_PYTHON
@@ -2950,6 +2951,7 @@ graphics_info_t::draw_measure_distance_and_angles(stereo_eye_t eye) {
       }
    }
 
+   coot_plus_ruler_draw(eye); // COOT+ hook: the Coot+ ruler (coot-plus-ruler.cc)
 }
 
 
