@@ -1186,6 +1186,29 @@ graphics_info_t::on_glarea_scrolled(GtkEventControllerScroll *controller,
       return;
    }
 
+   // Coot+: trackpad (pixel) scrolls arrive as many small deltas; turn them into
+   // steps (zoom / contour) every 12 pixels so two-finger scrolling isn't racing
+   if (!trackpad_drag_rotates && !control_is_pressed &&
+       gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_SURFACE) {
+      double d = dy;
+      if (d == 0.0 && shift_is_pressed) d = dx;
+      trackpad_contour_accumulator += d;
+      const double step_px = 12.0;
+      bool zoom = scroll_wheel_zooms ? !shift_is_pressed : shift_is_pressed;
+      while (std::abs(trackpad_contour_accumulator) >= step_px) {
+         double dir = trackpad_contour_accumulator > 0 ? 1.0 : -1.0;
+         trackpad_contour_accumulator -= dir * step_px;
+         if (zoom) {
+            do_mouse_zoom(dir);
+         } else {
+            if (graphics_info_t::glareas.size() > 0)
+               g_idle_add(idle_contour_function, graphics_info_t::glareas[0]);
+            contour_level_scroll_scrollable_map(dir);
+         }
+      }
+      return;
+   }
+
    bool handled = false;
    if (false)
       std::cout << "on_glarea_scrolled() control_is_pressed " << control_is_pressed
