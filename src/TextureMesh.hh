@@ -179,6 +179,8 @@ public:
                       const glm::mat4 &model,
                       const glm::mat4 &view,
                       const glm::mat4 &projection);
+   // Coot+: atom label size multiplier, set from set_font_size() (1.0 = medium)
+   static float atom_label_size_factor;
    void draw_atom_label(const std::string &atom_label,
                         const glm::vec3 &atom_label_position,
                         const glm::vec4 &text_colour, // set using subbufferdata
