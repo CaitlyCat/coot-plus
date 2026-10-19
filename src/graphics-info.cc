@@ -1361,6 +1361,14 @@ graphics_info_t::set_font_size(int size) {
 
    atom_label_font_size = size;
 
+   // Coot+: the GLUT fonts below are long gone, so this did nothing. Scale the
+   // (FreeType texture) atom labels instead: 1 small, 2 medium (default), 3-5 larger.
+   {
+      static const float factors[] = {1.0f, 0.75f, 1.0f, 1.35f, 1.75f, 2.25f};
+      int i = size < 1 ? 1 : (size > 5 ? 5 : size);
+      TextureMesh::atom_label_size_factor = factors[i];
+   }
+
 #if 0
    if (size == 2) {
       atom_label_font = GLUT_BITMAP_HELVETICA_12;
