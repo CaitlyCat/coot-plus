@@ -57,6 +57,10 @@
 
 #include "utils/logging.hh"
 #include "widget-from-builder.hh"
+#include "utils/setup-syminfo.hh"
+
+// Coot+: set in startup(), used to show no_symmetry_warning_dialog once the GUI is up
+static bool symmetry_library_found = true;
 std::string git_commit(); // use a header?
 
 extern logging logger;
@@ -1424,6 +1428,16 @@ startup_application_activate(GtkApplication *application,
          }
       }
 
+      // Coot+: without syminfo.lib symmetry silently does nothing - say so in the GUI
+      if (!symmetry_library_found) {
+         GtkWidget *dialog = widget_from_builder("no_symmetry_warning_dialog");
+         if (dialog) {
+            graphics_info_t::set_transient_for_main_window(dialog);
+            gtk_widget_set_visible(dialog, TRUE);
+         }
+         graphics_info_t::add_status_bar_text("Symmetry library (syminfo.lib) not found - symmetry will not work");
+      }
+
       // load_tutorial_model_and_data();
       delete activate_data;
 
@@ -1527,6 +1541,10 @@ int startup(int argc, char **argv) {
 #endif
 
    coot::set_realpath_for_coot_executable(argv[0]);
+
+   // Coot+: this was only done when coot is imported as a Python module, so the
+   // GUI never set SYMINFO itself (and never checked it pointed at a real file).
+   symmetry_library_found = setup_syminfo();
 
    mmdb::InitMatType();
 
