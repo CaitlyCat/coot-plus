@@ -512,6 +512,10 @@ void build_command_registry(GtkApplication *application) {
          auto it_i = action_icons().find(c.action);
          if (it_i != action_icons().end()) c.icon = it_i->second;
       }
+      if (c.icon.empty() && c.label == "Add Water Here") c.icon = "coot-plus-tool-add-water-symbolic";
+      if (c.icon.empty() && c.label == "Increase Map Radius") c.icon = "coot-plus-tool-radius-larger-symbolic";
+      if (c.icon.empty() && c.label == "Decrease Map Radius") c.icon = "coot-plus-tool-radius-smaller-symbolic";
+      if (c.icon.empty() && c.label == "Show Go To Residue Keyboarding Window") c.icon = "coot-plus-tool-type-residue-symbolic";
    }
 }
 
@@ -1217,7 +1221,32 @@ std::string tooltip_for(const command_t &c) {
    return tip;
 }
 
-GtkWidget *tool_button_content(const std::string &icon, const std::string &label, const std::string &shortcut) {
+// Coot's toolbar icons are a mix of clip-art styles; show Coot+'s line icons instead
+// (pixmaps/coot-plus-tool-*-symbolic.svg), which also follow the light/dark theme.
+std::string modern_icon(const std::string &icon) {
+   static const std::map<std::string, std::string> m = {
+      {"add-alt-conf", "add-alt-conf"}, {"add-peptide-1", "add-residue"}, {"anchor", "fixed-atoms"},
+      {"auto-fit-rotamer", "auto-fit-rotamer"}, {"broom", "clear-dots"}, {"cell+symm", "unit-cell"},
+      {"connect-to-world", "download-pdb"}, {"coot-configuration", "settings"}, {"coot-delete", "delete"},
+      {"delete", "delete-residue"}, {"density-fit", "problems"}, {"diff-map", "diff-map"},
+      {"edit-chi", "edit-chi"}, {"flip-peptide", "flip-peptide"}, {"go-to-atom", "go-to-atom"},
+      {"go-to-ligand", "go-to-ligand"}, {"map", "open-map"}, {"mutate", "mutate"},
+      {"mutate-auto-fit", "mutate-auto-fit"}, {"python-logo", "python"}, {"range-pair", "range"},
+      {"refine-1", "refine"}, {"reset-view", "reset-view"}, {"rigid-body", "rigid-body"},
+      {"rotamers", "rotamers"}, {"rtz", "rotate-translate"}, {"side-chain-180", "side-chain-180"},
+      {"unknown-blob", "blob"}, {"sequence-view", "sequence"}, {"regularize-1", "regularize"},
+      {"layla_6arom", "ligand-builder"}, {"smiles", "smiles"}, {"probe-clash", "contact-dots"},
+      {"water-drop", "water"}, {"residue-info", "residue-info"}, {"atom-at-pointer", "add-atom"},
+      {"env-distances", "distances"}, {"pointer-distances", "pointer-distance"}};
+   if (icon == "coot-undo") return "coot-plus-undo-symbolic";
+   if (icon == "coot-redo") return "coot-plus-redo-symbolic";
+   if (icon == "display-manager") return "coot-plus-molecules-symbolic";
+   auto it = m.find(icon);
+   return it == m.end() ? icon : "coot-plus-tool-" + it->second + "-symbolic";
+}
+
+GtkWidget *tool_button_content(const std::string &icon_in, const std::string &label, const std::string &shortcut) {
+   std::string icon = modern_icon(icon_in);
    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
    GtkWidget *img = icon.empty() ? gtk_image_new() : gtk_image_new_from_icon_name(icon.c_str());
    gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
@@ -1535,7 +1564,7 @@ void populate_sidebar(GtkWidget *outer) {
             bool blobs = ref == "special:blobs";
             command_t c;
             c.label = blobs ? "Unmodelled Blobs List" : "Problems List";
-            c.icon = blobs ? "unknown-blob" : "density-fit";
+            c.icon = blobs ? "unknown-blob" : "coot-plus-tool-outliers-symbolic";
             c.description = blobs ? "Lists density the model doesn't explain (too big for a water), biggest first, with the "
                                     "nearest residues. Click one to go there."
                                   : "Lists residues with Ramachandran, rotamer or density-fit problems, worst first. "
@@ -3667,7 +3696,7 @@ GtkWidget *make_file_row(const std::string &icon, const std::string &title, cons
                          const std::string &tooltip) {
    GtkWidget *b = gtk_button_new();
    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-   GtkWidget *img = icon.empty() ? gtk_image_new() : gtk_image_new_from_icon_name(icon.c_str());
+   GtkWidget *img = icon.empty() ? gtk_image_new() : gtk_image_new_from_icon_name(modern_icon(icon).c_str());
    gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
    gtk_widget_set_valign(img, GTK_ALIGN_START);
    GtkWidget *texts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -5904,7 +5933,16 @@ const std::map<std::string, std::string> &action_icons() {
       {"app.delete_item_atom", "delete"}, {"app.delete_item_water", "delete"},
       {"app.delete_item_residue_range", "delete"}, {"app.find_ligands_action", "go-to-ligand"},
       {"app.unmodelled_blobs_action", "unknown-blob"}, {"app.ligand_builder_action", "layla_6arom"},
-      {"app.SMILES_to_3D_action", "smiles"}, {"app.show_validation_graphs_dialog", "density-fit"},
+      {"app.SMILES_to_3D_action", "smiles"}, {"app.show_validation_graphs_dialog", "coot-plus-tool-graphs-symbolic"},
+      {"app.ramachandran_plot_action", "coot-plus-tool-rama-plot-symbolic"},
+      {"app.open_coordinates_action", "coot-plus-load-symbolic"},
+      {"app.save_coordinates_action", "coot-plus-save-symbolic"},
+      {"app.save_state_action", "coot-plus-tool-save-state-symbolic"},
+      {"app.screenshot_action", "coot-plus-tool-screenshot-symbolic"},
+      {"app.jiggle_fit_active_residue_action", "coot-plus-tool-jiggle-symbolic"},
+      {"app.geometric_distortions_for_ligand_action", "coot-plus-tool-distortions-symbolic"},
+      {"app.import_cif_dictionary_action", "coot-plus-tool-import-dictionary-symbolic"},
+      {"app.validation_outliers_action", "coot-plus-tool-outliers-symbolic"},
       {"app.difference_map_peaks_action", "diff-map"}, {"app.atoms_overlaps_action", "probe-clash"},
       {"app.all_atom_contact_dots_molprobity_action", "probe-clash"}, {"app.check_delete_waters_action", "water-drop"},
       {"app.residue_info_action", "residue-info"}, {"app.add_an_atom_action", "atom-at-pointer"},
@@ -6092,7 +6130,7 @@ void coot_plus_setup_ui(GtkApplication *application) {
       if (GtkWidget *py = widget_from_builder("python_scripting_button")) gtk_widget_set_visible(py, FALSE);
       GtkWidget *pb = gtk_button_new();
       GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-      GtkWidget *img = gtk_image_new_from_icon_name("python-logo");
+      GtkWidget *img = gtk_image_new_from_icon_name("coot-plus-tool-python-symbolic");
       gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
       gtk_box_append(GTK_BOX(content), img);
       gtk_box_append(GTK_BOX(content), gtk_label_new("Python"));

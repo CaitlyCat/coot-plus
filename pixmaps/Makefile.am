@@ -111,6 +111,56 @@ endif
 # Coot+ interface icons (symbolic: recoloured to the theme)
 dist_cootpixmap_DATA += \
 	coot-plus-build-symbolic.svg \
+	coot-plus-tool-radius-larger-symbolic.svg \
+	coot-plus-tool-radius-smaller-symbolic.svg \
+	coot-plus-tool-save-state-symbolic.svg \
+	coot-plus-tool-screenshot-symbolic.svg \
+	coot-plus-tool-distortions-symbolic.svg \
+	coot-plus-tool-import-dictionary-symbolic.svg \
+	coot-plus-tool-jiggle-symbolic.svg \
+	coot-plus-tool-type-residue-symbolic.svg \
+	coot-plus-tool-add-atom-symbolic.svg \
+	coot-plus-tool-add-water-symbolic.svg \
+	coot-plus-tool-contact-dots-symbolic.svg \
+	coot-plus-tool-distances-symbolic.svg \
+	coot-plus-tool-graphs-symbolic.svg \
+	coot-plus-tool-ligand-builder-symbolic.svg \
+	coot-plus-tool-outliers-symbolic.svg \
+	coot-plus-tool-pointer-distance-symbolic.svg \
+	coot-plus-tool-rama-plot-symbolic.svg \
+	coot-plus-tool-regularize-symbolic.svg \
+	coot-plus-tool-residue-info-symbolic.svg \
+	coot-plus-tool-sequence-symbolic.svg \
+	coot-plus-tool-smiles-symbolic.svg \
+	coot-plus-tool-water-symbolic.svg \
+	coot-plus-tool-add-alt-conf-symbolic.svg \
+	coot-plus-tool-add-residue-symbolic.svg \
+	coot-plus-tool-auto-fit-rotamer-symbolic.svg \
+	coot-plus-tool-blob-symbolic.svg \
+	coot-plus-tool-clear-dots-symbolic.svg \
+	coot-plus-tool-delete-residue-symbolic.svg \
+	coot-plus-tool-delete-symbolic.svg \
+	coot-plus-tool-diff-map-symbolic.svg \
+	coot-plus-tool-download-pdb-symbolic.svg \
+	coot-plus-tool-edit-chi-symbolic.svg \
+	coot-plus-tool-fixed-atoms-symbolic.svg \
+	coot-plus-tool-flip-peptide-symbolic.svg \
+	coot-plus-tool-go-to-atom-symbolic.svg \
+	coot-plus-tool-go-to-ligand-symbolic.svg \
+	coot-plus-tool-mutate-auto-fit-symbolic.svg \
+	coot-plus-tool-mutate-symbolic.svg \
+	coot-plus-tool-open-map-symbolic.svg \
+	coot-plus-tool-problems-symbolic.svg \
+	coot-plus-tool-python-symbolic.svg \
+	coot-plus-tool-range-symbolic.svg \
+	coot-plus-tool-refine-symbolic.svg \
+	coot-plus-tool-reset-view-symbolic.svg \
+	coot-plus-tool-rigid-body-symbolic.svg \
+	coot-plus-tool-rotamers-symbolic.svg \
+	coot-plus-tool-rotate-translate-symbolic.svg \
+	coot-plus-tool-settings-symbolic.svg \
+	coot-plus-tool-side-chain-180-symbolic.svg \
+	coot-plus-tool-unit-cell-symbolic.svg \
 	coot-plus-inspector-symbolic.svg \
 	coot-plus-ligands-symbolic.svg \
 	coot-plus-load-symbolic.svg \
