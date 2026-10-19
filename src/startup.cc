@@ -1048,7 +1048,7 @@ startup_application_activate(GtkApplication *application,
 
    activate_data->application = application;
 
-   std::string window_name = "Coot-" + std::string(VERSION);
+   std::string window_name = "Coot+"; // Coot+: was "Coot-" + VERSION (version is in Help > About)
 
 #ifdef WINDOWS_MINGW
    window_name = "WinCoot-" + std::string(VERSION);
