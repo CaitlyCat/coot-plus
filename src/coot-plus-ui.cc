@@ -82,6 +82,19 @@ GtkWidget *classic_toolbar = nullptr; // Coot's original vertical build toolbar
 void set_classic_toolbar_visible(bool state);
 
 void update_molecules_section(); // inspector Molecules card
+void show_find_ligands_window();
+void show_assembly_window();
+void set_custom_label(int imol, const std::string &label);
+void set_symmetry_view(bool state);
+void show_blobs_window();
+void show_problems_window();
+void show_problems_on_model(bool on);
+GtkWidget *phenix_box = nullptr;
+void refresh_phenix_box();
+void choose_phenix_folder();
+void update_sequence_strip();
+void update_ligand_card();
+void step_residue(int delta);
 void ask_rename_molecule(int imol);
 std::string config_path(const std::string &file);
 nlohmann::json read_json_file(const std::string &fn, const nlohmann::json &dflt);
@@ -123,6 +136,32 @@ void load_favourites();
 void rebuild_favourites();
 std::vector<std::string> favourites; // command keys (favourite tools)
 GtkWidget *favourites_box = nullptr;
+
+struct preset_t {
+   std::string name, task, description;
+   bool symmetry = false;
+   double symm_radius = 0, map_radius = 0;
+   int font_size = 0;              // 0: leave
+   int panels = -1;                // -1 leave, 0 hide both, 1 show both
+   std::string coot_action;        // e.g. scene_preset_figure_making_action
+   bool problems = false;
+};
+
+std::vector<preset_t> builtin_presets();
+void apply_preset(const preset_t &p);
+void set_theme(const std::string &theme);
+std::string building_task; // the task whose page is being built (for right-click menus)
+std::vector<std::string> custom_common(const std::string &task);
+void save_custom_common(const std::string &task, const std::vector<std::string> &keys, bool remove);
+std::string command_key(const command_t &c);
+std::string load_coot_plus_setting_string(const char *key, const std::string &dflt);
+void rebuild_sidebar();
+GtkWidget *make_script_page();
+GtkWidget *console_notebook = nullptr;
+GtkWidget *make_snippets_page();
+const std::vector<std::pair<std::string, std::string> > &accent_colours();
+void set_accent(const std::string &hex);
+struct common_menu_t { std::string task; std::string key; std::string entry; std::vector<std::string> cur; bool in = false; GtkWidget *pop = nullptr; };
 
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_priorities();
@@ -968,6 +1007,20 @@ void add_coot_plus_commands() {
    add("Save Open Files as a Group", "Load > Groups", "group project session save files together",
        [] () { ask_name("Save Group", "Name for this group of files:", "My project",
                         [] (const std::string &n) { save_open_files_as_group(n); }); });
+   add("Previous Residue", "Inspector", "step back previous residue chain walk", [] () { step_residue(-1); });
+   add("Next Residue", "Inspector", "step forward next residue chain walk", [] () { step_residue(+1); });
+   add("Unmodelled Blobs List", "Validate", "blobs density unexplained ligand missing", [] () { show_blobs_window(); });
+   add("Problems List", "Validate", "outliers problems validation ramachandran rotamer density fit", [] () { show_problems_window(); });
+   add("Show Problems on the Model", "Validate", "validation markers flags outliers on model", [] () { show_problems_on_model(true); });
+   add("Remove Problem Markers", "Validate", "validation markers clear", [] () { show_problems_on_model(false); });
+   add("Open Phenix Refinement", "Load > Phenix", "phenix refine run folder open latest newest", [] () { choose_phenix_folder(); });
+   add("Find Ligands (Coot+)", "Ligands", "ligand fit dock blob find place", [] () { show_find_ligands_window(); });
+   add("Make Assembly from Symmetry", "Symmetry", "assembly trimer dimer oligomer symmetry copies chains write biological unit",
+       [] () { show_assembly_window(); });
+   for (const auto &p : builtin_presets())
+      add("Workspace: " + p.name, "Header > Workspace", "workspace preset layout setup " + to_lower(p.name), [p] () { apply_preset(p); });
+   add("Light Theme", "Preferences > Coot+", "light theme white appearance", [] () { set_theme("light"); });
+   add("Dark Theme", "Preferences > Coot+", "dark theme black appearance", [] () { set_theme("dark"); });
    add("Command Log", "Header > More", "history log record replay script python macro commands",
        [] () { show_command_log(); });
    add("Cancel Pick Mode (Esc)", "Banner", "cancel stop pick click mode escape",
@@ -1004,20 +1057,22 @@ const std::map<std::string, std::vector<std::string> > &common_tools() {
    static const std::map<std::string, std::vector<std::string> > m = {
       {"Load",     {"section:Open", "app.open_coordinates_action", "app.auto_open_mtz_action", "app.open_map_action",
                     "app.show_accession_code_fetch_frame_oca|PDB Entry", "app.get_monomer_action",
+                    "section:Phenix", "special:phenix",
                     "section:Groups", "special:groups", "section:Recent files", "special:recent"}},
       {"Navigate", {"app.go_to_atom_action", "kb:Show Go To Residue Keyboarding Window|Type a Residue Number",
                     "tb:Go to Next Ligand", "tb:Reset View", "tb:Display Manager"}},
       {"Maps",     {"special:maps-hint", "app.map_parameters_action", "kb:Increase Map Radius",
                     "kb:Decrease Map Radius", "app.make_a_difference_map_action"}},
-      {"Symmetry", {"special:symmetry-toggle", "app.draw_cell_and_symmetry_action|Symmetry Settings",
+      {"Symmetry", {"special:symmetry-toggle", "special:assembly", "app.draw_cell_and_symmetry_action|Symmetry Settings",
                     "app.undo_symmetry_view_action", "app.save_symmetry_coordinates_action"}},
       {"Build",    {"special:range-pair", "app.refine_sphere|Refine Sphere", "app.refine_range|Refine Range",
                     "tb:Auto-Fit Rotamer", "tb:Flip Peptide", "menu:mutate-protein-menu|Mutate & Auto-Fit|mutate-auto-fit",
                     "kb:Add Water Here", "app.delete_item_residue|Delete Residue"}},
-      {"Ligands",  {"app.get_monomer_action", "app.find_ligands_action", "app.unmodelled_blobs_action",
+      {"Ligands",  {"app.get_monomer_action", "special:find-ligands", "special:blobs",
                     "app.jiggle_fit_active_residue_action", "app.geometric_distortions_for_ligand_action"}},
-      {"Validate", {"app.show_validation_graphs_dialog|Validation Graphs", "app.validation_outliers_action",
-                    "app.difference_map_peaks_action", "app.ramachandran_plot_action", "special:clear-drawn"}},
+      {"Validate", {"special:validation-markers", "special:problems-list", "special:blobs",
+                    "app.show_validation_graphs_dialog|Validation Graphs", "app.difference_map_peaks_action",
+                    "app.ramachandran_plot_action", "special:clear-drawn"}},
       {"Save",     {"app.save_coordinates_action", "app.save_state_action", "app.screenshot_action"}}};
    return m;
 }
@@ -1220,7 +1275,7 @@ std::string help_text_for(const command_t &c) {
    return t;
 }
 
-void attach_favourite_menu(GtkWidget *button, const command_t &c); // below
+void attach_favourite_menu(GtkWidget *button, const command_t &c, const std::string &shown_label = ""); // below
 
 GtkWidget *make_tool_button(const command_t &c, const std::string &short_label = "", bool show_shortcut = true) {
 
@@ -1234,7 +1289,7 @@ GtkWidget *make_tool_button(const command_t &c, const std::string &short_label =
    gtk_widget_set_focusable(button, FALSE); // keep keyboard shortcuts going to the graphics
    gtk_widget_set_tooltip_text(button, tooltip_for(c).c_str());
    attach_hover_help(button, short_label.empty() ? c.label : short_label, help_text_for(c));
-   attach_favourite_menu(button, c);
+   attach_favourite_menu(button, c, short_label.empty() ? c.label : short_label);
 
    command_t *copy = new command_t(c);
    g_signal_connect_data(button, "clicked",
@@ -1302,11 +1357,50 @@ GtkWidget *section_label(const std::string &text) {
    return l;
 }
 
-GtkWidget *make_task_sidebar() {
+GtkWidget *sidebar_task_list = nullptr;
+GtkWidget *sidebar_stack = nullptr;
 
+void populate_sidebar(GtkWidget *outer);
+
+GtkWidget *make_task_sidebar() {
    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_widget_add_css_class(outer, "coot-plus-sidebar");
    gtk_widget_set_size_request(outer, 210, -1);
+   populate_sidebar(outer);
+   sidebar = outer;
+   return outer;
+}
+
+std::string current_task_name() {
+   if (!sidebar_stack) return "";
+   const char *n = gtk_stack_get_visible_child_name(GTK_STACK(sidebar_stack));
+   return n ? n : "";
+}
+
+void select_task(const std::string &name) {
+   if (!sidebar_task_list) return;
+   for (int i=0; ; i++) {
+      GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(sidebar_task_list), i);
+      if (!row) break;
+      if (name == gtk_widget_get_name(GTK_WIDGET(row))) { gtk_list_box_select_row(GTK_LIST_BOX(sidebar_task_list), row); break; }
+   }
+}
+
+void rebuild_sidebar() {
+   if (!sidebar) return;
+   std::string task = current_task_name();
+   GtkWidget *c;
+   while ((c = gtk_widget_get_first_child(sidebar)) != nullptr) gtk_box_remove(GTK_BOX(sidebar), c);
+   sidebar_shortcut_labels.clear(); sidebar_hint_labels.clear(); sidebar_tool_labels.clear();
+   symmetry_switch_sidebar = nullptr; recent_box = nullptr; groups_box = nullptr; phenix_box = nullptr;
+   favourites_box = nullptr; help_title = nullptr; help_text = nullptr; sidebar_help_box = nullptr;
+   populate_sidebar(sidebar);
+   apply_compact_sidebar(compact_sidebar);
+   refresh_recent_and_groups();
+   if (!task.empty()) select_task(task);
+}
+
+void populate_sidebar(GtkWidget *outer) {
 
    GtkWidget *stack = gtk_stack_new();
    gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
@@ -1317,6 +1411,8 @@ GtkWidget *make_task_sidebar() {
    gtk_list_box_set_selection_mode(GTK_LIST_BOX(task_list), GTK_SELECTION_BROWSE);
    gtk_widget_add_css_class(task_list, "coot-plus-task-list");
    gtk_widget_set_focusable(task_list, FALSE);
+   sidebar_task_list = task_list;
+   sidebar_stack = stack;
 
    {
       // Favourites: the first task
@@ -1399,6 +1495,55 @@ GtkWidget *make_task_sidebar() {
             gtk_box_append(GTK_BOX(page), l);
             return;
          }
+         if (ref == "special:phenix") {
+            phenix_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+            gtk_box_append(GTK_BOX(page), phenix_box);
+            refresh_phenix_box();
+            return;
+         }
+         if (ref == "special:validation-markers") {
+            GtkWidget *t = gtk_toggle_button_new();
+            gtk_button_set_child(GTK_BUTTON(t), tool_button_content("density-fit", "Show Problems on the Model", ""));
+            gtk_widget_add_css_class(t, "flat");
+            gtk_widget_add_css_class(t, "coot-plus-tool");
+            gtk_widget_set_focusable(t, FALSE);
+            gtk_widget_set_tooltip_text(t, "Marks residues with problems in the 3D view: red = serious (Ramachandran outlier, "
+                                           "rotamer outlier, CC < 0.4), orange = minor. Uses the model at the centre and the "
+                                           "refinement map. Click again to remove the markers.");
+            attach_hover_help(t, "Show Problems on the Model", "Red markers: Ramachandran or rotamer outliers, or density "
+                              "CC below 0.4. Orange: allowed-but-unusual Ramachandran or CC 0.4-0.6.");
+            g_signal_connect(t, "toggled", G_CALLBACK(+[] (GtkToggleButton *b, gpointer) {
+                                show_problems_on_model(gtk_toggle_button_get_active(b)); }), nullptr);
+            gtk_box_append(GTK_BOX(page), t);
+            return;
+         }
+         if (ref == "special:find-ligands" || ref == "special:assembly") {
+            bool fl = ref == "special:find-ligands";
+            command_t c;
+            c.label = fl ? "Find Ligands" : "Make Assembly from Symmetry";
+            c.icon = fl ? "go-to-ligand" : "cell+symm";
+            c.description = fl ? "Fits a loaded ligand into unexplained density - right here at the centre, or the whole map. "
+                                 "The 2mFo-DFc map and the protein are picked for you."
+                               : "Finds the symmetry copies that touch the model and makes a new model with them as extra "
+                                 "chains (e.g. a trimer as chains A, B, C).";
+            c.run = fl ? std::function<void()>([] () { show_find_ligands_window(); })
+                       : std::function<void()>([] () { show_assembly_window(); });
+            gtk_box_append(GTK_BOX(page), make_tool_button(c));
+            return;
+         }
+         if (ref == "special:problems-list" || ref == "special:blobs") {
+            bool blobs = ref == "special:blobs";
+            command_t c;
+            c.label = blobs ? "Unmodelled Blobs List" : "Problems List";
+            c.icon = blobs ? "unknown-blob" : "density-fit";
+            c.description = blobs ? "Lists density the model doesn't explain (too big for a water), biggest first, with the "
+                                    "nearest residues. Click one to go there."
+                                  : "Lists residues with Ramachandran, rotamer or density-fit problems, worst first. "
+                                    "Click one to go there.";
+            c.run = blobs ? std::function<void()>([] () { show_blobs_window(); }) : std::function<void()>([] () { show_problems_window(); });
+            gtk_box_append(GTK_BOX(page), make_tool_button(c));
+            return;
+         }
          if (ref == "special:recent" || ref == "special:groups") {
             GtkWidget *b = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
             if (ref == "special:recent") recent_box = b; else groups_box = b;
@@ -1462,12 +1607,25 @@ GtkWidget *make_task_sidebar() {
          return;
             };
 
+      building_task = task.name;
       auto cit = common_tools().find(task.name);
       GtkWidget *full_box = page;
       if (cit != common_tools().end()) {
-         if (cit->second.empty() || cit->second[0].rfind("section:", 0) != 0)
-            gtk_box_append(GTK_BOX(page), section_label("Common"));
-         for (const auto &ref : cit->second) append_entry(page, ref, true);
+         std::vector<std::string> custom = custom_common(task.name);
+         if (cit->second.empty() || cit->second[0].rfind("section:", 0) != 0 || !custom.empty())
+            gtk_box_append(GTK_BOX(page), section_label(custom.empty() ? "Common" : "Common (yours)"));
+         const std::vector<std::string> &entries = custom.empty() ? cit->second : custom;
+         for (const auto &e : entries) {
+            if (e.rfind("cmd:", 0) == 0) {
+               size_t sep = e.find('\x1f');
+               std::string key = e.substr(4, sep == std::string::npos ? std::string::npos : sep - 4);
+               std::string label = sep == std::string::npos ? std::string() : e.substr(sep + 1);
+               for (const auto &cmd : commands)
+                  if (command_key(cmd) == key) { gtk_box_append(GTK_BOX(page), make_tool_button(cmd, label, true)); break; }
+            } else {
+               append_entry(page, e, true);
+            }
+         }
          added.clear();
          GtkWidget *exp = gtk_expander_new(("All " + task.name + " tools").c_str());
          gtk_widget_add_css_class(exp, "coot-plus-expander");
@@ -1483,6 +1641,11 @@ GtkWidget *make_task_sidebar() {
       }
       for (const auto &ref : task.tools) {
          // the custom widgets live in the Common list only (one of each)
+         if (ref.rfind("special:", 0) == 0 && ref != "special:classic-toolbar" && ref != "special:maps-hint" &&
+             cit != common_tools().end()) {
+            bool in_common = std::find(cit->second.begin(), cit->second.end(), ref) != cit->second.end();
+            if (in_common) continue;
+         }
          if (cit != common_tools().end() && ref.rfind("special:", 0) == 0 &&
              std::find(cit->second.begin(), cit->second.end(), ref) != cit->second.end()) continue;
          append_entry(full_box, ref, true);
@@ -1534,9 +1697,6 @@ GtkWidget *make_task_sidebar() {
    help_default_text  = "Point at a tool to see what it does. Most tools act on the residue at the centre of the "
                         "screen: Option-click an atom to centre on it first (or use Go To Atom).";
    show_default_help();
-
-   sidebar = outer;
-   return outer;
 }
 
 // ------------------------------------------------------------------------------------
@@ -1765,6 +1925,8 @@ gboolean inspector_tick(gpointer) {
    if (!gtk_widget_get_mapped(inspector)) return G_SOURCE_CONTINUE;
    update_molecules_section();
    update_selection_section();
+   update_sequence_strip();
+   update_ligand_card();
    update_maps_section();
    update_misc_section();
    sync_scroll_buttons();
@@ -2815,11 +2977,24 @@ void toggle_favourite(const command_t &c) {
    g_idle_add(+[] (gpointer) -> gboolean { rebuild_favourites(); return G_SOURCE_REMOVE; }, nullptr);
 }
 
-void attach_favourite_menu(GtkWidget *button, const command_t &c) {
+// an entry of a customised Common list for a command: "cmd:<command key>|<label shown>"
+std::string common_entry_for(const command_t &c, const std::string &label) { return "cmd:" + command_key(c) + "\x1f" + label; }
+
+// does a Common-list entry stand for this command?
+bool common_entry_is(const std::string &entry, const std::string &key) {
+   if (entry.rfind("cmd:", 0) == 0) return entry.substr(4, entry.find('\x1f') - 4) == key;
+   if (entry.rfind("special:", 0) == 0 || entry.rfind("section:", 0) == 0 || entry.rfind("menu:", 0) == 0) return false;
+   const command_t *cc = resolve_tool(entry);
+   return cc && command_key(*cc) == key;
+}
+
+void attach_favourite_menu(GtkWidget *button, const command_t &c, const std::string &shown_label) {
    GtkGesture *rc = gtk_gesture_click_new();
    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rc), GDK_BUTTON_SECONDARY);
    command_t *copy = new command_t(c);
    g_object_set_data_full(G_OBJECT(rc), "cmd", copy, +[] (gpointer d) { delete static_cast<command_t *>(d); });
+   g_object_set_data_full(G_OBJECT(rc), "task", g_strdup(building_task.c_str()), g_free);
+   g_object_set_data_full(G_OBJECT(rc), "shown", g_strdup(shown_label.c_str()), g_free);
    g_signal_connect(rc, "pressed", G_CALLBACK(+[] (GtkGestureClick *g, int, double, double, gpointer) {
                        command_t *c = static_cast<command_t *>(g_object_get_data(G_OBJECT(g), "cmd"));
                        GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
@@ -2836,7 +3011,53 @@ void attach_favourite_menu(GtkWidget *button, const command_t &c) {
                                            gtk_popover_popdown(GTK_POPOVER(p));
                                            toggle_favourite(copy);
                                         }), nullptr);
-                       gtk_popover_set_child(GTK_POPOVER(pop), b);
+                       GtkWidget *pbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+                       gtk_box_append(GTK_BOX(pbox), b);
+                       std::string task = static_cast<const char *>(g_object_get_data(G_OBJECT(g), "task"));
+                       if (!task.empty() && task != "Favourites") {
+                          std::vector<std::string> cur = custom_common(task);
+                          bool customised = !cur.empty();
+                          if (!customised) cur = common_tools().at(task); // start from what the Common list shows now
+                          std::string key = command_key(*c);
+                          bool in = false;
+                          for (const auto &e : cur) if (common_entry_is(e, key)) in = true;
+                          std::string shown = static_cast<const char *>(g_object_get_data(G_OBJECT(g), "shown"));
+                          GtkWidget *cb = gtk_button_new_with_label(in ? ("Remove from " + task + " Common list").c_str()
+                                                                       : ("Add to " + task + " Common list").c_str());
+                          gtk_widget_add_css_class(cb, "flat");
+                          common_menu_t *cm = new common_menu_t;
+                          cm->task = task; cm->key = key; cm->cur = cur; cm->in = in; cm->pop = pop;
+                          cm->entry = common_entry_for(*c, shown);
+                          g_object_set_data_full(G_OBJECT(cb), "cm", cm, +[] (gpointer d) { delete static_cast<common_menu_t *>(d); });
+                          g_signal_connect(cb, "clicked", G_CALLBACK(+[] (GtkButton *btn, gpointer) {
+                                              common_menu_t *cm = static_cast<common_menu_t *>(g_object_get_data(G_OBJECT(btn), "cm"));
+                                              std::vector<std::string> v = cm->cur;
+                                              if (cm->in) {
+                                                 std::vector<std::string> keep;
+                                                 for (const auto &e : v) if (!common_entry_is(e, cm->key)) keep.push_back(e);
+                                                 v = keep;
+                                              } else {
+                                                 v.push_back(cm->entry);
+                                              }
+                                              save_custom_common(cm->task, v, false);
+                                              gtk_popover_popdown(GTK_POPOVER(cm->pop));
+                                              g_idle_add(+[] (gpointer) -> gboolean { rebuild_sidebar(); return G_SOURCE_REMOVE; }, nullptr);
+                                           }), nullptr);
+                          gtk_box_append(GTK_BOX(pbox), cb);
+                          if (customised) {
+                             GtkWidget *reset = gtk_button_new_with_label(("Reset " + task + " Common list").c_str());
+                             gtk_widget_add_css_class(reset, "flat");
+                             g_object_set_data_full(G_OBJECT(reset), "task", g_strdup(task.c_str()), g_free);
+                             g_object_set_data(G_OBJECT(reset), "pop", pop);
+                             g_signal_connect(reset, "clicked", G_CALLBACK(+[] (GtkButton *btn, gpointer) {
+                                                 save_custom_common(static_cast<const char *>(g_object_get_data(G_OBJECT(btn), "task")), {}, true);
+                                                 gtk_popover_popdown(GTK_POPOVER(g_object_get_data(G_OBJECT(btn), "pop")));
+                                                 g_idle_add(+[] (gpointer) -> gboolean { rebuild_sidebar(); return G_SOURCE_REMOVE; }, nullptr);
+                                              }), nullptr);
+                             gtk_box_append(GTK_BOX(pbox), reset);
+                          }
+                       }
+                       gtk_popover_set_child(GTK_POPOVER(pop), pbox);
                        gtk_widget_set_parent(pop, w);
                        g_signal_connect(pop, "closed", G_CALLBACK(+[] (GtkPopover *p, gpointer) {
                                            g_idle_add(+[] (gpointer p) -> gboolean { gtk_widget_unparent(GTK_WIDGET(p));
@@ -2910,6 +3131,26 @@ void add_preferences_page() {
                pref_choice({"Centre on it", "Label it"}, get_double_click_centres() ? 0 : 1,
                            [] (int i) { set_double_click_centres(i == 0);
                                         save_coot_plus_setting_bool("double-click-centres", i == 0); })));
+   gtk_box_append(GTK_BOX(page), section_label("Appearance"));
+   {
+      std::string th = load_coot_plus_setting_string("theme", "dark");
+      gtk_box_append(GTK_BOX(page), pref_row("Theme", "Light or dark windows and panels",
+         pref_choice({"Dark", "Light", "System"}, th == "light" ? 1 : (th == "system" ? 2 : 0),
+                     [] (int i) { set_theme(i == 0 ? "dark" : (i == 1 ? "light" : "system")); })));
+      std::string ac = load_coot_plus_setting_string("accent", "#3584e4");
+      std::vector<std::string> names;
+      int active = 0;
+      for (unsigned int i=0; i<accent_colours().size(); i++) {
+         names.push_back(accent_colours()[i].first);
+         if (accent_colours()[i].second == ac) active = i;
+      }
+      gtk_box_append(GTK_BOX(page), pref_row("Accent colour", "Colour of the selected task, buttons and highlights",
+         pref_choice(names, active, [] (int i) { set_accent(accent_colours()[i].second); })));
+      gtk_box_append(GTK_BOX(page), pref_row("3D background", "Background of the 3D view",
+         pref_choice({"Black", "Dark grey", "White"}, 0, [] (int i) {
+            const char *a[] = {"background_black_action", "background_dark_grey_action", "background_white_action"};
+            g_action_group_activate_action(G_ACTION_GROUP(coot_plus_app), a[i], nullptr); })));
+   }
    gtk_box_append(GTK_BOX(page), section_label("Panels"));
    gtk_box_append(GTK_BOX(page),
       pref_row("Task sidebar", "Compact: narrower, without shortcut chips, page hints and the help box",
@@ -3908,8 +4149,12 @@ void show_python_console() {
       gtk_box_append(GTK_BOX(box), console_doc);
       gtk_box_append(GTK_BOX(box), in_sw);
       gtk_box_append(GTK_BOX(box), buttons);
-      gtk_window_set_child(GTK_WINDOW(w), box);
       console_window = w;
+      console_notebook = gtk_notebook_new();
+      gtk_notebook_append_page(GTK_NOTEBOOK(console_notebook), box, gtk_label_new("Console"));
+      gtk_notebook_append_page(GTK_NOTEBOOK(console_notebook), make_script_page(), gtk_label_new("Script"));
+      gtk_notebook_append_page(GTK_NOTEBOOK(console_notebook), make_snippets_page(), gtk_label_new("Snippets"));
+      gtk_window_set_child(GTK_WINDOW(w), console_notebook);
    }
    gtk_window_present(GTK_WINDOW(console_window));
    gtk_widget_grab_focus(console_in);
@@ -3933,6 +4178,1379 @@ void set_compact_sidebar(bool on) {
    apply_compact_sidebar(on);
    save_coot_plus_setting_bool("compact-sidebar", on);
    graphics_info_t::add_status_bar_text(on ? "Compact sidebar" : "Full sidebar");
+}
+
+
+// ------------------------------------------------------------------------------------
+//          calling the Coot+ Python helpers (python/coot_plus.py)
+// ------------------------------------------------------------------------------------
+
+// evaluate a Python expression (with coot, coot_utils and coot_plus imported) and
+// return its value as JSON (null on error - the error goes to the terminal/log)
+nlohmann::json py_json(const std::string &expr) {
+   ignore_history_scope ignore; // the coot calls inside are not the user's commands
+   nlohmann::json j;
+   PyGILState_STATE gil = PyGILState_Ensure();
+   PyObject *main_dict = PyModule_GetDict(PyImport_AddModule("__main__"));
+   PyRun_SimpleString("import json as __cp_json, coot_plus as __cp_plus, coot as __cp_coot");
+   std::string code = "__cp_json.dumps(" + expr + ")";
+   PyObject *r = PyRun_String(code.c_str(), Py_eval_input, main_dict, main_dict);
+   if (r && PyUnicode_Check(r)) {
+      j = nlohmann::json::parse(PyUnicode_AsUTF8(r), nullptr, false);
+      if (j.is_discarded()) j = nullptr;
+   } else {
+      PyErr_Print();
+   }
+   Py_XDECREF(r);
+   PyErr_Clear();
+   PyGILState_Release(gil);
+   return j;
+}
+
+std::string py_str(const std::string &s) { // a Python string literal
+   nlohmann::json j = s;
+   return j.dump();
+}
+
+// the map to use: the refinement map, else the first non-difference map, else any map
+int best_map() {
+   int r = imol_refinement_map();
+   if (is_valid_map_molecule(r) && !map_is_difference_map(r)) return r;
+   for (int i=0; i<graphics_n_molecules(); i++) if (is_valid_map_molecule(i) && !map_is_difference_map(i)) return i;
+   for (int i=0; i<graphics_n_molecules(); i++) if (is_valid_map_molecule(i)) return i;
+   return -1;
+}
+
+// the model to use: the one at the centre, else the biggest
+int best_model() {
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > aa = graphics_info_t::active_atom_spec();
+   if (aa.first && is_valid_model_molecule(aa.second.first)) return aa.second.first;
+   int best = -1, n = 0;
+   for (int i=0; i<graphics_n_molecules(); i++)
+      if (is_valid_model_molecule(i) && graphics_info_t::molecules[i].atom_sel.n_selected_atoms > n) {
+         best = i; n = graphics_info_t::molecules[i].atom_sel.n_selected_atoms; }
+   return best;
+}
+
+// go to a residue, centring on its CA (or C1', C1, O, P, or the first atom)
+void go_to_residue(int imol, const std::string &chain, int resno, const std::string &ins) {
+   if (!is_valid_model_molecule(imol)) return;
+   mmdb::Residue *r = graphics_info_t::molecules[imol].get_residue(chain, resno, ins);
+   if (!r || r->GetNumberOfAtoms() == 0) return;
+   std::string atom_name;
+   for (const char *pref : {" CA ", " C1'", " C1 ", " O  ", " P  "}) {
+      for (int ia=0; ia<r->GetNumberOfAtoms(); ia++)
+         if (std::string(r->GetAtom(ia)->name) == pref) { atom_name = pref; break; }
+      if (!atom_name.empty()) break;
+   }
+   if (atom_name.empty()) atom_name = r->GetAtom(0)->name;
+   set_go_to_atom_molecule(imol);
+   set_go_to_atom_chain_residue_atom_name_full(chain.c_str(), resno, ins.c_str(), atom_name.c_str(), "");
+}
+
+void show_list_window(const std::string &title, const std::string &intro, GtkWidget *content, int w, int h); // below
+
+// ------------------------------------------------------------------------------------
+//          residue stepping and the sequence strip (inspector)
+// ------------------------------------------------------------------------------------
+
+GtkWidget *seq_strip_box = nullptr;
+GtkWidget *seq_strip_scroll = nullptr;
+std::string seq_strip_signature;
+std::vector<std::pair<std::string, GtkWidget *> > seq_strip_cells; // "resno|ins" -> label
+
+char one_letter(const std::string &rn) {
+   static const std::map<std::string, char> m = {
+      {"ALA",'A'},{"ARG",'R'},{"ASN",'N'},{"ASP",'D'},{"CYS",'C'},{"GLN",'Q'},{"GLU",'E'},{"GLY",'G'},
+      {"HIS",'H'},{"ILE",'I'},{"LEU",'L'},{"LYS",'K'},{"MET",'M'},{"PHE",'F'},{"PRO",'P'},{"SER",'S'},
+      {"THR",'T'},{"TRP",'W'},{"TYR",'Y'},{"VAL",'V'},{"MSE",'M'},{"SEP",'S'},{"TPO",'T'},{"PTR",'Y'},
+      {"A",'A'},{"C",'C'},{"G",'G'},{"U",'U'},{"DA",'A'},{"DC",'C'},{"DG",'G'},{"DT",'T'},{"HOH",'w'}};
+   auto it = m.find(rn);
+   return it == m.end() ? '*' : it->second;
+}
+
+// step to the previous/next residue in the chain of the active residue
+void step_residue(int delta) {
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > aa = graphics_info_t::active_atom_spec();
+   if (!aa.first) { graphics_info_t::add_status_bar_text("Centre on a residue first"); return; }
+   int imol = aa.second.first;
+   const coot::atom_spec_t &spec = aa.second.second;
+   mmdb::Manager *mol = graphics_info_t::molecules[imol].atom_sel.mol;
+   if (!mol) return;
+   mmdb::Model *model = mol->GetModel(1);
+   mmdb::Chain *c = model ? model->GetChain(spec.chain_id.c_str()) : nullptr;
+   if (!c) return;
+   int n = c->GetNumberOfResidues();
+   for (int i=0; i<n; i++) {
+      mmdb::Residue *r = c->GetResidue(i);
+      if (r && r->GetSeqNum() == spec.res_no && std::string(r->GetInsCode()) == spec.ins_code) {
+         int j = i + delta;
+         while (j >= 0 && j < n && (!c->GetResidue(j) || c->GetResidue(j)->GetNumberOfAtoms() == 0)) j += delta;
+         if (j < 0 || j >= n) { graphics_info_t::add_status_bar_text(delta > 0 ? "End of the chain" : "Start of the chain"); return; }
+         mmdb::Residue *rn = c->GetResidue(j);
+         go_to_residue(imol, spec.chain_id, rn->GetSeqNum(), rn->GetInsCode());
+         return;
+      }
+   }
+}
+
+void update_sequence_strip() {
+   if (!seq_strip_box) return;
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > aa = graphics_info_t::active_atom_spec();
+   if (!aa.first || !is_valid_model_molecule(aa.second.first)) {
+      if (!seq_strip_signature.empty()) {
+         GtkWidget *c;
+         while ((c = gtk_widget_get_first_child(seq_strip_box)) != nullptr) gtk_box_remove(GTK_BOX(seq_strip_box), c);
+         seq_strip_cells.clear();
+         seq_strip_signature.clear();
+      }
+      return;
+   }
+   int imol = aa.second.first;
+   const coot::atom_spec_t &spec = aa.second.second;
+   mmdb::Manager *mol = graphics_info_t::molecules[imol].atom_sel.mol;
+   mmdb::Model *model = mol ? mol->GetModel(1) : nullptr;
+   mmdb::Chain *chain = model ? model->GetChain(spec.chain_id.c_str()) : nullptr;
+   if (!chain) return;
+   std::string sig = std::to_string(imol) + "|" + spec.chain_id + "|" + std::to_string(chain->GetNumberOfResidues()) +
+                     "|" + molecule_name(imol);
+   if (sig != seq_strip_signature) {
+      seq_strip_signature = sig;
+      GtkWidget *c;
+      while ((c = gtk_widget_get_first_child(seq_strip_box)) != nullptr) gtk_box_remove(GTK_BOX(seq_strip_box), c);
+      seq_strip_cells.clear();
+      for (int i=0; i<chain->GetNumberOfResidues() && i < 3000; i++) {
+         mmdb::Residue *r = chain->GetResidue(i);
+         if (!r) continue;
+         std::string rn = r->GetResName();
+         if (rn == "HOH" || rn == "WAT") continue; // the strip is the sequence
+         char ch = one_letter(rn);
+         GtkWidget *l = gtk_label_new(std::string(1, ch).c_str());
+         gtk_widget_add_css_class(l, "coot-plus-seq-cell");
+         if (ch == '*') gtk_widget_add_css_class(l, "coot-plus-seq-het");
+         std::string tip = residue_display_name(rn) + " " + std::to_string(r->GetSeqNum()) + r->GetInsCode() + "  chain " + spec.chain_id;
+         gtk_widget_set_tooltip_text(l, tip.c_str());
+         GtkGesture *click = gtk_gesture_click_new();
+         struct cell_t { int imol; std::string chain; int resno; std::string ins; };
+         cell_t *ct = new cell_t{imol, spec.chain_id, r->GetSeqNum(), r->GetInsCode()};
+         g_object_set_data_full(G_OBJECT(click), "cell", ct, +[] (gpointer d) { delete static_cast<cell_t *>(d); });
+         g_signal_connect(click, "released", G_CALLBACK(+[] (GtkGestureClick *g, int, double, double, gpointer) {
+                             cell_t *c = static_cast<cell_t *>(g_object_get_data(G_OBJECT(g), "cell"));
+                             go_to_residue(c->imol, c->chain, c->resno, c->ins); }), nullptr);
+         gtk_widget_add_controller(l, GTK_EVENT_CONTROLLER(click));
+         gtk_box_append(GTK_BOX(seq_strip_box), l);
+         seq_strip_cells.push_back(std::make_pair(std::to_string(r->GetSeqNum()) + "|" + r->GetInsCode(), l));
+      }
+   }
+   // highlight the current residue and keep it in view
+   std::string cur = std::to_string(spec.res_no) + "|" + spec.ins_code;
+   for (auto &cell : seq_strip_cells) {
+      bool on = cell.first == cur;
+      if (on != gtk_widget_has_css_class(cell.second, "coot-plus-seq-current")) {
+         if (on) {
+            gtk_widget_add_css_class(cell.second, "coot-plus-seq-current");
+            graphene_point_t p, origin = GRAPHENE_POINT_INIT(0, 0);
+            if (gtk_widget_compute_point(cell.second, seq_strip_box, &origin, &p)) {
+               GtkAdjustment *adj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(seq_strip_scroll));
+               double page = gtk_adjustment_get_page_size(adj);
+               gtk_adjustment_set_value(adj, std::max(0.0, p.x - page / 2));
+            }
+         } else {
+            gtk_widget_remove_css_class(cell.second, "coot-plus-seq-current");
+         }
+      }
+   }
+}
+
+GtkWidget *make_stepping_row() {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_box_set_homogeneous(GTK_BOX(row), TRUE);
+   GtkWidget *prev = gtk_button_new_with_label("◀  Previous");
+   GtkWidget *next = gtk_button_new_with_label("Next  ▶");
+   for (GtkWidget *b : {prev, next}) { gtk_widget_set_focusable(b, FALSE); gtk_widget_add_css_class(b, "coot-plus-pill"); }
+   gtk_widget_set_tooltip_text(prev, "Go to the previous residue in this chain");
+   gtk_widget_set_tooltip_text(next, "Go to the next residue in this chain");
+   g_signal_connect(prev, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { step_residue(-1); }), nullptr);
+   g_signal_connect(next, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { step_residue(+1); }), nullptr);
+   gtk_box_append(GTK_BOX(row), prev);
+   gtk_box_append(GTK_BOX(row), next);
+   seq_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   seq_strip_scroll = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(seq_strip_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(seq_strip_scroll), seq_strip_box);
+   gtk_widget_add_css_class(seq_strip_scroll, "coot-plus-seq-strip");
+   gtk_widget_set_tooltip_text(seq_strip_scroll, "The sequence of this chain - click a residue to go there");
+   gtk_box_append(GTK_BOX(box), row);
+   gtk_box_append(GTK_BOX(box), seq_strip_scroll);
+   return box;
+}
+
+// ------------------------------------------------------------------------------------
+//          ligand check card (inspector) - shown when centred on a ligand
+// ------------------------------------------------------------------------------------
+
+GtkWidget *ligand_card = nullptr;
+GtkWidget *ligand_title = nullptr;
+GtkWidget *ligand_details = nullptr;
+std::string ligand_signature;
+
+bool is_ligand_residue(const std::string &rn, mmdb::Residue *r) {
+   if (rn == "HOH" || rn == "WAT" || rn == "DOD") return false;
+   if (one_letter(rn) != '*') return false;              // amino acid / nucleotide
+   return r && r->GetNumberOfAtoms() >= 1;
+}
+
+// the protein a separate ligand molecule sits in: the biggest other model
+int ligand_protein_model(int imol_ligand) {
+   int best = -1, n = 0;
+   for (int i=0; i<graphics_n_molecules(); i++)
+      if (i != imol_ligand && is_valid_model_molecule(i) && mol_is_displayed(i) &&
+          graphics_info_t::molecules[i].atom_sel.n_selected_atoms > n) {
+         best = i; n = graphics_info_t::molecules[i].atom_sel.n_selected_atoms; }
+   return best;
+}
+
+void update_ligand_card() {
+   if (!ligand_card) return;
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > aa = graphics_info_t::active_atom_spec();
+   mmdb::Residue *r = nullptr;
+   int imol = -1;
+   std::string rn;
+   if (aa.first && is_valid_model_molecule(aa.second.first)) {
+      imol = aa.second.first;
+      const coot::atom_spec_t &s = aa.second.second;
+      r = graphics_info_t::molecules[imol].get_residue(s.chain_id, s.res_no, s.ins_code);
+      if (r) rn = r->GetResName();
+   }
+   if (!r || !is_ligand_residue(rn, r)) {
+      if (gtk_widget_get_visible(ligand_card)) gtk_widget_set_visible(ligand_card, FALSE);
+      ligand_signature.clear();
+      return;
+   }
+   const coot::atom_spec_t &s = aa.second.second;
+   int imap = best_map();
+   std::string sig = std::to_string(imol) + s.chain_id + std::to_string(s.res_no) + s.ins_code + "|" + std::to_string(imap);
+   if (sig == ligand_signature) return;
+   ligand_signature = sig;
+   gtk_widget_set_visible(ligand_card, TRUE);
+   double sum_b = 0, sum_occ = 0;
+   int n = r->GetNumberOfAtoms();
+   for (int i=0; i<n; i++) { sum_b += r->GetAtom(i)->tempFactor; sum_occ += r->GetAtom(i)->occupancy; }
+   std::string title = rn + " " + std::to_string(s.res_no) + s.ins_code + "  chain " + s.chain_id;
+   gtk_label_set_text(GTK_LABEL(ligand_title), title.c_str());
+   std::string d = std::to_string(n) + " atoms · mean B " + format_float(n ? sum_b / n : 0, 1) +
+                   " · occ " + format_float(n ? sum_occ / n : 0, 2);
+   nlohmann::json info = py_json("__cp_plus.ligand_info(" + std::to_string(imol) + ", " + py_str(s.chain_id) + ", " +
+                                 std::to_string(s.res_no) + ", " + py_str(s.ins_code) + ", " + std::to_string(imap) + ", " +
+                                 std::to_string(ligand_protein_model(imol)) + ")");
+   if (info.is_object()) {
+      if (info.contains("cc")) {
+         double cc = info["cc"].get<double>();
+         d += "\nDensity fit: CC " + format_float(cc, 2) +
+              (cc >= 0.8 ? " (good)" : (cc >= 0.6 ? " (fair)" : " (poor)")) + "  [" + display_name(imap) + "]";
+      } else {
+         d += "\nDensity fit: open a map to see it";
+      }
+      if (info.contains("contacts")) {
+         int nc = 0;
+         std::string near;
+         for (const auto &c : info["contacts"]) {
+            std::string crn = c[3].get<std::string>();
+            if (crn == "HOH" || crn == "WAT") continue;
+            nc++;
+            if (nc <= 5) near += (near.empty() ? "" : ", ") + residue_display_name(crn) + std::to_string(c[1].get<int>());
+         }
+         d += "\nWithin 4 Å: " + (near.empty() ? std::string("no residues") : near + (nc > 5 ? " …" : "")) +
+              " · " + std::to_string(info.value("n_waters_near", 0)) + " waters";
+      }
+   }
+   gtk_label_set_text(GTK_LABEL(ligand_details), d.c_str());
+}
+
+GtkWidget *make_ligand_card(GtkWidget *parent) {
+   GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_add_css_class(card, "coot-plus-card");
+   gtk_widget_add_css_class(card, "coot-plus-ligand-card");
+   gtk_box_append(GTK_BOX(card), section_label("Ligand"));
+   ligand_title = gtk_label_new("");
+   gtk_label_set_xalign(GTK_LABEL(ligand_title), 0.0);
+   gtk_widget_add_css_class(ligand_title, "coot-plus-selected-title");
+   ligand_details = gtk_label_new("");
+   gtk_label_set_xalign(GTK_LABEL(ligand_details), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(ligand_details), TRUE);
+   gtk_label_set_max_width_chars(GTK_LABEL(ligand_details), 32);
+   gtk_widget_add_css_class(ligand_details, "coot-plus-dim");
+   gtk_box_append(GTK_BOX(card), ligand_title);
+   gtk_box_append(GTK_BOX(card), ligand_details);
+   GtkWidget *grid = gtk_grid_new();
+   gtk_grid_set_column_homogeneous(GTK_GRID(grid), TRUE);
+   gtk_grid_set_row_spacing(GTK_GRID(grid), 4);
+   gtk_grid_set_column_spacing(GTK_GRID(grid), 4);
+   const std::vector<std::pair<std::string, std::string> > tools = {
+      {"kb:Sphere Refine", "Refine"}, {"app.jiggle_fit_active_residue_action", "Jiggle Fit"},
+      {"app.geometric_distortions_for_ligand_action", "Distortions"}, {"app.coot_contact_dots_for_ligand_action", "Contacts"},
+      {"app.environment_distances_action", "Distances"}, {"app.flev_action", "2D View"}};
+   int i = 0;
+   for (const auto &t : tools) {
+      const command_t *c = resolve_tool(t.first);
+      if (!c) continue;
+      GtkWidget *b = gtk_button_new_with_label(t.second.c_str());
+      gtk_widget_add_css_class(b, "coot-plus-pill");
+      gtk_widget_set_focusable(b, FALSE);
+      gtk_widget_set_tooltip_text(b, tooltip_for(*c).c_str());
+      command_t *copy = new command_t(*c);
+      g_signal_connect_data(b, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                               run_command(*static_cast<command_t *>(d)); ligand_signature.clear(); }),
+                            copy, +[] (gpointer d, GClosure *) { delete static_cast<command_t *>(d); }, GConnectFlags(0));
+      gtk_grid_attach(GTK_GRID(grid), b, i % 3, i / 3, 1, 1);
+      i++;
+   }
+   gtk_box_append(GTK_BOX(card), grid);
+   gtk_widget_set_visible(card, FALSE);
+   gtk_box_append(GTK_BOX(parent), card);
+   ligand_card = card;
+   return card;
+}
+
+// ------------------------------------------------------------------------------------
+//          list windows (blobs, problems)
+// ------------------------------------------------------------------------------------
+
+void show_list_window(const std::string &title, const std::string &intro, GtkWidget *content, int w, int h) {
+   GtkWidget *win = gtk_window_new();
+   gtk_window_set_title(GTK_WINDOW(win), title.c_str());
+   gtk_window_set_default_size(GTK_WINDOW(win), w, h);
+   if (GtkWidget *mw = graphics_info_t::get_main_window()) gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW(mw));
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+   gtk_widget_set_margin_start(box, 12); gtk_widget_set_margin_end(box, 12);
+   gtk_widget_set_margin_top(box, 10);   gtk_widget_set_margin_bottom(box, 12);
+   GtkWidget *l = gtk_label_new(intro.c_str());
+   gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+   gtk_widget_add_css_class(l, "coot-plus-dim");
+   GtkWidget *sw = gtk_scrolled_window_new();
+   gtk_widget_set_vexpand(sw, TRUE);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), content);
+   gtk_box_append(GTK_BOX(box), l);
+   gtk_box_append(GTK_BOX(box), sw);
+   gtk_window_set_child(GTK_WINDOW(win), box);
+   gtk_window_present(GTK_WINDOW(win));
+}
+
+GtkWidget *list_row_button(const std::string &title, const std::string &subtitle, const std::string &css_extra) {
+   GtkWidget *b = gtk_button_new();
+   GtkWidget *v = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
+   GtkWidget *t = gtk_label_new(title.c_str());
+   GtkWidget *st = gtk_label_new(subtitle.c_str());
+   gtk_label_set_xalign(GTK_LABEL(t), 0.0);
+   gtk_label_set_xalign(GTK_LABEL(st), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(st), TRUE);
+   gtk_widget_add_css_class(t, "coot-plus-map-name");
+   gtk_widget_add_css_class(st, "coot-plus-dim");
+   if (!css_extra.empty()) gtk_widget_add_css_class(t, css_extra.c_str());
+   gtk_box_append(GTK_BOX(v), t);
+   gtk_box_append(GTK_BOX(v), st);
+   gtk_button_set_child(GTK_BUTTON(b), v);
+   gtk_widget_add_css_class(b, "flat");
+   gtk_widget_add_css_class(b, "coot-plus-tool");
+   gtk_widget_set_focusable(b, FALSE);
+   return b;
+}
+
+void show_blobs_window() {
+   int imol = best_model(), imap = best_map();
+   if (imol < 0 || imap < 0) {
+      coot_plus_message("warning", "Unmodelled blobs needs a model and a map", "Open a model, then Auto Open MTZ");
+      return;
+   }
+   graphics_info_t::add_status_bar_text("Looking for unmodelled density…");
+   nlohmann::json bl = py_json("__cp_plus.blobs(" + std::to_string(imol) + ", " + std::to_string(imap) + ", 1.0)");
+   GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+   int n = 0;
+   if (bl.is_array()) {
+      for (const auto &b : bl) {
+         n++;
+         std::string near;
+         for (const auto &r : b["near"])
+            near += (near.empty() ? "" : ", ") + r[0].get<std::string>() + std::to_string(r[1].get<int>()) + " " +
+                    residue_display_name(r[3].get<std::string>());
+         std::string title = "Blob " + std::to_string(n) + "   ≈" + format_float(b["score"].get<double>(), 0) + " Å³";
+         std::string sub = near.empty() ? "No residues within 5 Å" : "Near " + near;
+         GtkWidget *row = list_row_button(title, sub, "");
+         struct pos_t { double x, y, z; };
+         pos_t *p = new pos_t{b["x"].get<double>(), b["y"].get<double>(), b["z"].get<double>()};
+         g_signal_connect_data(row, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                                  pos_t *p = static_cast<pos_t *>(d); set_rotation_centre(p->x, p->y, p->z); }),
+                               p, +[] (gpointer d, GClosure *) { delete static_cast<pos_t *>(d); }, GConnectFlags(0));
+         gtk_box_append(GTK_BOX(list), row);
+      }
+   }
+   if (n == 0) {
+      GtkWidget *l = gtk_label_new("No unmodelled blobs found at 1.0 σ.");
+      gtk_box_append(GTK_BOX(list), l);
+   }
+   show_list_window("Unmodelled Blobs - " + display_name(imol),
+                    std::to_string(n) + " regions of density (above 1.0 σ in " + display_name(imap) +
+                    ") that the model doesn't explain and that are too big to be a water - biggest first. "
+                    "Volume is the size of the density cluster. Click one to go there.", list, 460, 520);
+   graphics_info_t::add_status_bar_text(std::to_string(n) + " unmodelled blobs");
+}
+
+// ------------------------------------------------------------------------------------
+//          validation: problems drawn on the model, and a list
+// ------------------------------------------------------------------------------------
+
+std::set<int> models_with_markers;
+
+void show_problems_on_model(bool on) {
+   int imol = best_model();
+   if (imol < 0) { graphics_info_t::add_status_bar_text("Open a model first"); return; }
+   if (!on) {
+      py_json("__cp_plus.clear_validation_markers(" + std::to_string(imol) + ")");
+      models_with_markers.erase(imol);
+      graphics_info_t::add_status_bar_text("Problem markers removed");
+      graphics_draw();
+      return;
+   }
+   nlohmann::json r = py_json("__cp_plus.draw_validation_markers(" + std::to_string(imol) + ", " + std::to_string(best_map()) + ")");
+   models_with_markers.insert(imol);
+   int n = (r.is_array() && r.size() > 1) ? r[1].get<int>() : 0;
+   graphics_info_t::add_status_bar_text("Marked " + std::to_string(n) + " residues with problems: red = serious, orange = minor");
+   graphics_draw();
+}
+
+void show_problems_window() {
+   int imol = best_model(), imap = best_map();
+   if (imol < 0) { graphics_info_t::add_status_bar_text("Open a model first"); return; }
+   nlohmann::json issues = py_json("__cp_plus.validation_issues(" + std::to_string(imol) + ", " + std::to_string(imap) + ")");
+   GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+   int n = 0;
+   if (issues.is_array()) {
+      for (const auto &d : issues) {
+         n++;
+         std::string title = residue_display_name(d.value("resname", "")) + " " + std::to_string(d["resno"].get<int>()) +
+                             d.value("ins", "") + "  chain " + d.value("chain", "");
+         std::string sub;
+         for (const auto &p : d["problems"]) sub += (sub.empty() ? "" : " · ") + p.get<std::string>();
+         GtkWidget *row = list_row_button((d["severity"].get<int>() >= 2 ? "● " : "○ ") + title, sub,
+                                          d["severity"].get<int>() >= 2 ? "coot-plus-serious" : "coot-plus-minor");
+         struct res_t { int imol; std::string chain; int resno; std::string ins; };
+         res_t *rr = new res_t{imol, d.value("chain", ""), d["resno"].get<int>(), d.value("ins", "")};
+         g_signal_connect_data(row, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer p) {
+                                  res_t *r = static_cast<res_t *>(p); go_to_residue(r->imol, r->chain, r->resno, r->ins); }),
+                               rr, +[] (gpointer p, GClosure *) { delete static_cast<res_t *>(p); }, GConnectFlags(0));
+         gtk_box_append(GTK_BOX(list), row);
+      }
+   }
+   if (n == 0) gtk_box_append(GTK_BOX(list), gtk_label_new("No problems found."));
+   show_list_window("Problems - " + display_name(imol),
+                    std::to_string(n) + " residues: Ramachandran (Coot's plot thresholds), rotamers below 1%" +
+                    std::string(imap >= 0 ? ", and density fit (CC below 0.6 with " + display_name(imap) + ")" : " (open a map to check density fit too)") +
+                    ". ● serious, ○ minor. Click one to go there.", list, 480, 560);
+}
+
+// ------------------------------------------------------------------------------------
+//          Phenix refinement runs
+// ------------------------------------------------------------------------------------
+
+std::string phenix_folder;
+double phenix_opened_mtime = 0;
+guint phenix_watch = 0;
+
+void open_phenix_run(const nlohmann::json &run) {
+   py_json("__cp_plus.open_phenix_run(" + py_str(run["model"].get<std::string>()) + ", " + py_str(run["mtz"].get<std::string>()) + ")");
+   phenix_opened_mtime = run["mtime"].get<double>();
+   graphics_info_t::add_status_bar_text("Opened Phenix run " + std::to_string(run["run"].get<int>()) + ": " +
+                                        file_basename(run["model"].get<std::string>()));
+   refresh_phenix_box();
+}
+
+gboolean phenix_watch_tick(gpointer) {
+   if (phenix_folder.empty()) return G_SOURCE_CONTINUE;
+   nlohmann::json runs = py_json("__cp_plus.phenix_runs(" + py_str(phenix_folder) + ")");
+   if (runs.is_array() && !runs.empty()) {
+      const auto &newest = runs.back();
+      if (newest["mtime"].get<double>() > phenix_opened_mtime + 1.0) {
+         static double told = 0;
+         if (newest["mtime"].get<double>() != told) {
+            told = newest["mtime"].get<double>();
+            coot_plus_message("info", "Newer Phenix refinement: run " + std::to_string(newest["run"].get<int>()) + " (" +
+                              file_basename(newest["model"].get<std::string>()) + ")",
+                              "Open it from Load › Phenix");
+            refresh_phenix_box();
+         }
+      }
+   }
+   return G_SOURCE_CONTINUE;
+}
+
+void use_phenix_folder(const std::string &folder) {
+   phenix_folder = folder;
+   GKeyFile *kf = g_key_file_new();
+   std::string fn = coot_plus_settings_file();
+   g_key_file_load_from_file(kf, fn.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
+   g_key_file_set_string(kf, "interface", "phenix-folder", folder.c_str());
+   gchar *dir = g_path_get_dirname(fn.c_str()); g_mkdir_with_parents(dir, 0755); g_free(dir);
+   g_key_file_save_to_file(kf, fn.c_str(), nullptr);
+   g_key_file_free(kf);
+   nlohmann::json runs = py_json("__cp_plus.phenix_runs(" + py_str(folder) + ")");
+   if (!runs.is_array() || runs.empty()) {
+      coot_plus_message("warning", "No Phenix refinement runs found in " + file_basename(folder),
+                        "Looking for *_refine_NNN.pdb (or .cif) with a matching .mtz");
+      refresh_phenix_box();
+      return;
+   }
+   nlohmann::json newest = runs.back();
+   ask_choice("Open Phenix run " + std::to_string(newest["run"].get<int>()) + "?",
+              file_basename(newest["model"].get<std::string>()) + " and its maps (2mFo-DFc, mFo-DFc).\n"
+              "Close what's open first? (Maps from a different run won't match.)",
+              {"Cancel", "Add to Open Files", "Close Others and Open"}, 0, 2, [newest] (int r) {
+                 if (r == 2)
+                    for (int i=0; i<graphics_n_molecules(); i++)
+                       if (is_valid_model_molecule(i) || is_valid_map_molecule(i)) close_molecule(i);
+                 open_phenix_run(newest);
+              });
+   if (!phenix_watch) phenix_watch = g_timeout_add_seconds(20, phenix_watch_tick, nullptr);
+}
+
+void choose_phenix_folder() {
+   GtkFileDialog *fd = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(fd, "Choose a Phenix refinement folder");
+   if (!phenix_folder.empty()) {
+      GFile *f = g_file_new_for_path(phenix_folder.c_str());
+      gtk_file_dialog_set_initial_folder(fd, f);
+      g_object_unref(f);
+   }
+   GtkWidget *mw = graphics_info_t::get_main_window();
+   gtk_file_dialog_select_folder(fd, mw ? GTK_WINDOW(mw) : nullptr, nullptr, +[] (GObject *src, GAsyncResult *res, gpointer) {
+                                    GFile *f = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, nullptr);
+                                    if (!f) return;
+                                    char *p = g_file_get_path(f);
+                                    if (p) use_phenix_folder(p);
+                                    g_free(p);
+                                    g_object_unref(f);
+                                 }, nullptr);
+   g_object_unref(fd);
+}
+
+void refresh_phenix_box() {
+   if (!phenix_box) return;
+   GtkWidget *c;
+   while ((c = gtk_widget_get_first_child(phenix_box)) != nullptr) gtk_box_remove(GTK_BOX(phenix_box), c);
+   GtkWidget *choose = gtk_button_new();
+   gtk_button_set_child(GTK_BUTTON(choose), tool_button_content("coot-plus-load-symbolic", "Open Phenix Refinement…", ""));
+   gtk_widget_add_css_class(choose, "flat");
+   gtk_widget_add_css_class(choose, "coot-plus-tool");
+   gtk_widget_set_focusable(choose, FALSE);
+   gtk_widget_set_tooltip_text(choose, "Choose a Phenix refinement folder: opens the newest *_refine_NNN model with its "
+                                       "2mFo-DFc and mFo-DFc maps, and tells you when a newer run appears");
+   g_signal_connect(choose, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { choose_phenix_folder(); }), nullptr);
+   gtk_box_append(GTK_BOX(phenix_box), choose);
+   if (!phenix_folder.empty()) {
+      nlohmann::json runs = py_json("__cp_plus.phenix_runs(" + py_str(phenix_folder) + ")");
+      if (runs.is_array() && !runs.empty()) {
+         const nlohmann::json newest = runs.back();
+         bool newer = newest["mtime"].get<double>() > phenix_opened_mtime + 1.0;
+         std::string t = std::string(newer ? "★ Newest: " : "Newest: ") + "run " + std::to_string(newest["run"].get<int>());
+         GtkWidget *b = make_file_row("map", t, file_basename(phenix_folder) + " · " + std::to_string(runs.size()) + " runs",
+                                      newest["model"].get<std::string>() + "\n" + newest["mtz"].get<std::string>() +
+                                      "\n\nClick to open (asks whether to close what's open)");
+         nlohmann::json *copy = new nlohmann::json(newest);
+         g_signal_connect_data(b, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                                  nlohmann::json run = *static_cast<nlohmann::json *>(d);
+                                  ask_choice("Open Phenix run " + std::to_string(run["run"].get<int>()) + "?", "Close what's open first?",
+                                             {"Cancel", "Add to Open Files", "Close Others and Open"}, 0, 2, [run] (int r) {
+                                                if (r == 2)
+                                                   for (int i=0; i<graphics_n_molecules(); i++)
+                                                      if (is_valid_model_molecule(i) || is_valid_map_molecule(i)) close_molecule(i);
+                                                open_phenix_run(run); }); }),
+                               copy, +[] (gpointer d, GClosure *) { delete static_cast<nlohmann::json *>(d); }, GConnectFlags(0));
+         gtk_box_append(GTK_BOX(phenix_box), b);
+      }
+   }
+}
+
+
+// ------------------------------------------------------------------------------------
+//          Find Ligands with sensible defaults
+// ------------------------------------------------------------------------------------
+
+GtkWidget *molecule_dropdown(const std::vector<int> &mols, int selected) {
+   std::vector<std::string> names;
+   for (int i : mols) names.push_back(display_name(i) + "  (#" + std::to_string(i) + ")");
+   std::vector<const char *> c;
+   for (const auto &n : names) c.push_back(n.c_str());
+   c.push_back(nullptr);
+   GtkWidget *dd = gtk_drop_down_new_from_strings(c.data());
+   for (unsigned int k=0; k<mols.size(); k++) if (mols[k] == selected) gtk_drop_down_set_selected(GTK_DROP_DOWN(dd), k);
+   return dd;
+}
+
+void show_find_ligands_window() {
+   std::vector<int> proteins, ligands, maps;
+   for (int i=0; i<graphics_n_molecules(); i++) {
+      if (is_valid_model_molecule(i)) {
+         int n = graphics_info_t::molecules[i].atom_sel.n_selected_atoms;
+         if (n < 300) ligands.push_back(i); else proteins.push_back(i);
+      } else if (is_valid_map_molecule(i) && !map_is_difference_map(i)) maps.push_back(i);
+   }
+   if (proteins.empty() || maps.empty()) {
+      coot_plus_message("warning", "Find Ligands needs a model and a map",
+                        "Open the model, then Auto Open MTZ (or Load › Phenix)");
+      return;
+   }
+   GtkWidget *win = gtk_window_new();
+   gtk_window_set_title(GTK_WINDOW(win), "Find Ligands");
+   gtk_window_set_default_size(GTK_WINDOW(win), 420, -1);
+   if (GtkWidget *mw = graphics_info_t::get_main_window()) gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW(mw));
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+   gtk_widget_set_margin_start(box, 16); gtk_widget_set_margin_end(box, 16);
+   gtk_widget_set_margin_top(box, 14);   gtk_widget_set_margin_bottom(box, 14);
+   auto row = [&] (const char *label, GtkWidget *w, const char *tip) {
+      GtkWidget *r = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+      GtkWidget *l = gtk_label_new(label);
+      gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+      gtk_widget_set_size_request(l, 90, -1);
+      gtk_widget_set_hexpand(w, TRUE);
+      if (tip) gtk_widget_set_tooltip_text(r, tip);
+      gtk_box_append(GTK_BOX(r), l);
+      gtk_box_append(GTK_BOX(r), w);
+      gtk_box_append(GTK_BOX(box), r);
+   };
+   GtkWidget *intro = gtk_label_new("Fits a ligand into density the model doesn't explain. The map and protein are chosen "
+                                    "for you; check them and press Find.");
+   gtk_label_set_wrap(GTK_LABEL(intro), TRUE);
+   gtk_label_set_xalign(GTK_LABEL(intro), 0.0);
+   gtk_widget_add_css_class(intro, "coot-plus-dim");
+   gtk_box_append(GTK_BOX(box), intro);
+
+   GtkWidget *lig_dd = nullptr;
+   if (ligands.empty()) {
+      GtkWidget *get = gtk_button_new_with_label("Get Monomer… (load the ligand first)");
+      g_signal_connect(get, "clicked", G_CALLBACK(+[] (GtkButton *b, gpointer) {
+                          g_action_group_activate_action(G_ACTION_GROUP(coot_plus_app), "get_monomer_action", nullptr);
+                          gtk_window_destroy(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(b))));
+                          graphics_info_t::add_status_bar_text("After the ligand is loaded, open Find Ligands again");
+                       }), nullptr);
+      row("Ligand", get, "No small molecule is open yet: get it by its three-letter code (e.g. GOL, ATP)");
+   } else {
+      lig_dd = molecule_dropdown(ligands, ligands.back());
+      row("Ligand", lig_dd, "The ligand to fit (an open molecule with fewer than 300 atoms)");
+   }
+   GtkWidget *map_dd = molecule_dropdown(maps, best_map());
+   row("Map", map_dd, "Fit into this map - usually the 2mFo-DFc map");
+   GtkWidget *prot_dd = molecule_dropdown(proteins, best_model() >= 0 && graphics_info_t::molecules[best_model()].atom_sel.n_selected_atoms >= 300
+                                                    ? best_model() : proteins[0]);
+   row("Protein", prot_dd, "Density already explained by this model is not used");
+   GtkWidget *here = gtk_check_button_new_with_label("Only right here (the blob at the screen centre)");
+   gtk_check_button_set_active(GTK_CHECK_BUTTON(here), TRUE);
+   gtk_widget_set_tooltip_text(here, "Untick to search the whole map (slower)");
+   GtkWidget *flex = gtk_check_button_new_with_label("Flexible ligand (try conformations)");
+   gtk_widget_set_tooltip_text(flex, "Also samples the ligand's rotatable bonds - slower, better for long ligands");
+   gtk_box_append(GTK_BOX(box), here);
+   gtk_box_append(GTK_BOX(box), flex);
+   GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_set_halign(buttons, GTK_ALIGN_END);
+   GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+   GtkWidget *go = gtk_button_new_with_label("Find");
+   gtk_widget_add_css_class(go, "suggested-action");
+   gtk_widget_set_sensitive(go, lig_dd != nullptr);
+   gtk_box_append(GTK_BOX(buttons), cancel);
+   gtk_box_append(GTK_BOX(buttons), go);
+   gtk_box_append(GTK_BOX(box), buttons);
+   gtk_window_set_child(GTK_WINDOW(win), box);
+   g_signal_connect_swapped(cancel, "clicked", G_CALLBACK(gtk_window_destroy), win);
+
+   struct fl_t { std::vector<int> ligands, maps, proteins; GtkWidget *lig, *map, *prot, *here, *flex; };
+   fl_t *ctx = new fl_t{ligands, maps, proteins, lig_dd, map_dd, prot_dd, here, flex};
+   g_object_set_data_full(G_OBJECT(win), "ctx", ctx, +[] (gpointer d) { delete static_cast<fl_t *>(d); });
+   g_signal_connect(go, "clicked", G_CALLBACK(+[] (GtkButton *b, gpointer w) {
+                       fl_t *c = static_cast<fl_t *>(g_object_get_data(G_OBJECT(w), "ctx"));
+                       int lig  = c->ligands [gtk_drop_down_get_selected(GTK_DROP_DOWN(c->lig))];
+                       int map  = c->maps    [gtk_drop_down_get_selected(GTK_DROP_DOWN(c->map))];
+                       int prot = c->proteins[gtk_drop_down_get_selected(GTK_DROP_DOWN(c->prot))];
+                       bool here = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->here));
+                       bool flex = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->flex));
+                       gtk_window_destroy(GTK_WINDOW(w));
+                       graphics_info_t::add_status_bar_text("Fitting " + display_name(lig) + "…");
+                       add_ligand_clear_ligands();
+                       set_ligand_search_protein_molecule(prot);
+                       set_ligand_search_map_molecule(map);
+                       if (flex) add_ligand_search_wiggly_ligand_molecule(lig); else add_ligand_search_ligand_molecule(lig);
+                       set_find_ligand_here_cluster(here ? 1 : 0);
+                       nlohmann::json sol = py_json("__cp_coot.execute_ligand_search_py()");
+                       set_find_ligand_here_cluster(0);
+                       // Coot shows its own result dialog too - Coot+ reports the result itself
+                       for (const char *id : {"new_ligands_info_dialog", "no_new_ligands_info_dialog"})
+                          if (GtkWidget *d = widget_from_builder(id)) gtk_widget_set_visible(d, FALSE);
+                       int n = sol.is_array() ? sol.size() : 0;
+                       if (n == 0) {
+                          coot_plus_message("warning", "No place found for " + display_name(lig),
+                                            here ? "Centre on the blob (Option-click) and try again, or untick “Only right here”"
+                                                 : "Try a lower contour, or check the ligand matches the density");
+                          return;
+                       }
+                       int best = sol[0].get<int>();
+                       std::string all;
+                       for (const auto &x : sol) all += (all.empty() ? "#" : ", #") + std::to_string(x.get<int>());
+                       ask_choice("Placed " + display_name(lig) + ": " + std::to_string(n) + " solution(s)",
+                                  "The best is #" + std::to_string(best) + " (now centred). Solutions: " + all +
+                                  ".\nMerge the best one into " + display_name(prot) + "?",
+                                  {"Keep Separate", "Merge Best into Model"}, 0, 1, [best, prot] (int) {
+                                     py_json("__cp_coot.merge_molecules_py([" + std::to_string(best) + "], " + std::to_string(prot) + ")");
+                                     close_molecule(best);
+                                     graphics_info_t::add_status_bar_text("Merged the ligand into " + display_name(prot));
+                                  });
+                       (void) b;
+                    }), win);
+   gtk_window_present(GTK_WINDOW(win));
+}
+
+// ------------------------------------------------------------------------------------
+//          Write assembly as chains: symmetry copies that touch the model
+// ------------------------------------------------------------------------------------
+
+struct sym_copy_t { int symop; int a, b, c; int contacts; mmdb::mat44 m; std::string name; };
+
+std::vector<sym_copy_t> contacting_copies(int imol, double contact_dist) {
+   std::vector<sym_copy_t> out;
+   mmdb::Manager *mol = graphics_info_t::molecules[imol].atom_sel.mol;
+   if (!mol) return out;
+   // representative atoms: CA / P / C1' (all atoms for small molecules)
+   std::vector<clipper::Coord_orth> pts;
+   const atom_selection_container_t &asc = graphics_info_t::molecules[imol].atom_sel;
+   for (int i=0; i<asc.n_selected_atoms; i++) {
+      mmdb::Atom *at = asc.atom_selection[i];
+      std::string n = at->name;
+      if (n == " CA " || n == " P  " || n == " C1'" || asc.n_selected_atoms < 400)
+         pts.push_back(clipper::Coord_orth(at->x, at->y, at->z));
+   }
+   if (pts.empty()) return out;
+   clipper::Coord_orth centre(0,0,0);
+   for (const auto &p : pts) centre += p;
+   centre = (1.0 / pts.size()) * centre;
+   double radius = 0;
+   for (const auto &p : pts) radius = std::max(radius, clipper::Coord_orth::length(p, centre));
+   int nsym = mol->GetNumberOfSymOps();
+   double d2 = contact_dist * contact_dist;
+   for (int isym=0; isym<nsym; isym++) {
+      for (int a=-3; a<=3; a++) for (int b=-3; b<=3; b++) for (int c=-3; c<=3; c++) {
+         if (isym == 0 && a == 0 && b == 0 && c == 0) continue;
+         sym_copy_t sc;
+         if (mol->GetTMatrix(sc.m, isym, a, b, c) != 0) continue;
+         auto tf = [&] (const clipper::Coord_orth &p) {
+            return clipper::Coord_orth(sc.m[0][0]*p.x() + sc.m[0][1]*p.y() + sc.m[0][2]*p.z() + sc.m[0][3],
+                                       sc.m[1][0]*p.x() + sc.m[1][1]*p.y() + sc.m[1][2]*p.z() + sc.m[1][3],
+                                       sc.m[2][0]*p.x() + sc.m[2][1]*p.y() + sc.m[2][2]*p.z() + sc.m[2][3]);
+         };
+         if (clipper::Coord_orth::length(tf(centre), centre) > 2 * radius + contact_dist) continue;
+         int n = 0;
+         for (const auto &p : pts) {
+            clipper::Coord_orth q = tf(p);
+            for (const auto &r : pts) if ((q - r).lengthsq() < d2) { n++; break; }
+         }
+         if (n >= 3) {
+            sc.symop = isym; sc.a = a; sc.b = b; sc.c = c; sc.contacts = n;
+            const char *op = mol->GetSymOp(isym);
+            sc.name = std::string(op ? op : "?");
+            if (a || b || c) sc.name += "  + (" + std::to_string(a) + "," + std::to_string(b) + "," + std::to_string(c) + ")";
+            out.push_back(sc);
+         }
+      }
+   }
+   std::sort(out.begin(), out.end(), [] (const sym_copy_t &x, const sym_copy_t &y) { return x.contacts > y.contacts; });
+   return out;
+}
+
+void show_assembly_window() {
+   int imol = best_model();
+   if (imol < 0) { graphics_info_t::add_status_bar_text("Open a model first"); return; }
+   if (model_cell(imol).size() < 6) {
+      coot_plus_message("warning", display_name(imol) + " has no unit cell (CRYST1)", "Symmetry copies need the cell and space group");
+      return;
+   }
+   graphics_info_t::add_status_bar_text("Looking for symmetry copies that touch " + display_name(imol) + "…");
+   std::vector<sym_copy_t> copies = contacting_copies(imol, 8.0);
+   if (copies.empty()) {
+      coot_plus_message("info", "No symmetry copy touches " + display_name(imol), "It has no crystal contacts within 8 Å (CA-CA)");
+      return;
+   }
+   GtkWidget *win = gtk_window_new();
+   gtk_window_set_title(GTK_WINDOW(win), "Make Assembly from Symmetry");
+   gtk_window_set_default_size(GTK_WINDOW(win), 460, 480);
+   if (GtkWidget *mw = graphics_info_t::get_main_window()) gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW(mw));
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+   gtk_widget_set_margin_start(box, 14); gtk_widget_set_margin_end(box, 14);
+   gtk_widget_set_margin_top(box, 12);   gtk_widget_set_margin_bottom(box, 12);
+   GtkWidget *intro = gtk_label_new(("Symmetry copies of " + display_name(imol) + " that touch it (CA atoms within 8 Å), most "
+                                     "contacts first. Tick the ones that form your assembly (e.g. the other two subunits of a "
+                                     "trimer) - a new model is made with the copies as extra chains.").c_str());
+   gtk_label_set_wrap(GTK_LABEL(intro), TRUE);
+   gtk_label_set_xalign(GTK_LABEL(intro), 0.0);
+   gtk_widget_add_css_class(intro, "coot-plus-dim");
+   gtk_box_append(GTK_BOX(box), intro);
+   GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+   std::vector<GtkWidget *> checks;
+   for (unsigned int i=0; i<copies.size() && i<24; i++) {
+      std::string t = copies[i].name + "    " + std::to_string(copies[i].contacts) + " CA in contact";
+      GtkWidget *cb = gtk_check_button_new_with_label(t.c_str());
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), i < 2 && copies[i].contacts >= copies[0].contacts / 3);
+      gtk_box_append(GTK_BOX(list), cb);
+      checks.push_back(cb);
+   }
+   GtkWidget *sw = gtk_scrolled_window_new();
+   gtk_widget_set_vexpand(sw, TRUE);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), list);
+   gtk_box_append(GTK_BOX(box), sw);
+   GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_set_halign(buttons, GTK_ALIGN_END);
+   GtkWidget *preview = gtk_button_new_with_label("Show Symmetry");
+   gtk_widget_set_tooltip_text(preview, "Turn the symmetry display on to look at the neighbours first");
+   GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+   GtkWidget *make = gtk_button_new_with_label("Make Assembly Model");
+   gtk_widget_add_css_class(make, "suggested-action");
+   gtk_box_append(GTK_BOX(buttons), preview);
+   gtk_box_append(GTK_BOX(buttons), cancel);
+   gtk_box_append(GTK_BOX(buttons), make);
+   gtk_box_append(GTK_BOX(box), buttons);
+   gtk_window_set_child(GTK_WINDOW(win), box);
+   g_signal_connect(preview, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { set_symmetry_view(true); }), nullptr);
+   g_signal_connect_swapped(cancel, "clicked", G_CALLBACK(gtk_window_destroy), win);
+   struct as_t { int imol; std::vector<sym_copy_t> copies; std::vector<GtkWidget *> checks; };
+   as_t *ctx = new as_t{imol, copies, checks};
+   g_object_set_data_full(G_OBJECT(win), "ctx", ctx, +[] (gpointer d) { delete static_cast<as_t *>(d); });
+   g_signal_connect(make, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer w) {
+                       as_t *c = static_cast<as_t *>(g_object_get_data(G_OBJECT(w), "ctx"));
+                       std::vector<int> made;
+                       for (unsigned int i=0; i<c->checks.size(); i++) {
+                          if (!gtk_check_button_get_active(GTK_CHECK_BUTTON(c->checks[i]))) continue;
+                          const mmdb::mat44 &m = c->copies[i].m;
+                          int ic = new_molecule_by_symmetry(c->imol, "", m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2],
+                                                            m[2][0], m[2][1], m[2][2], m[0][3], m[1][3], m[2][3], 0, 0, 0);
+                          if (ic >= 0) made.push_back(ic);
+                       }
+                       int imol = c->imol;
+                       std::string orig = display_name(imol);
+                       gtk_window_destroy(GTK_WINDOW(w));
+                       if (made.empty()) { graphics_info_t::add_status_bar_text("Nothing ticked"); return; }
+                       int base = copy_molecule(imol);
+                       std::string list;
+                       for (int m : made) list += (list.empty() ? "" : ", ") + std::to_string(m);
+                       nlohmann::json r = py_json("__cp_coot.merge_molecules_py([" + list + "], " + std::to_string(base) + ")");
+                       for (int m : made) close_molecule(m);
+                       std::string chains;
+                       if (r.is_array()) for (unsigned int k=1; k<r.size(); k++) if (r[k].is_string()) chains += (chains.empty() ? "" : ", ") + r[k].get<std::string>();
+                       set_custom_label(base, "Assembly of " + orig);
+                       graphics_info_t::add_status_bar_text("Made “Assembly of " + orig + "” (#" + std::to_string(base) + ")" +
+                                                            (chains.empty() ? "" : " - new chains " + chains) +
+                                                            ". Save it with Save › Save Coordinates.");
+                       graphics_draw();
+                    }), win);
+   gtk_window_present(GTK_WINDOW(win));
+}
+
+
+// ------------------------------------------------------------------------------------
+//          appearance: light/dark, accent colour, 3D background
+// ------------------------------------------------------------------------------------
+
+GtkCssProvider *accent_provider = nullptr;
+
+const std::vector<std::pair<std::string, std::string> > &accent_colours() {
+   static const std::vector<std::pair<std::string, std::string> > v = {
+      {"Blue", "#3584e4"}, {"Teal", "#2190a4"}, {"Green", "#2ec27e"}, {"Orange", "#e66100"},
+      {"Pink", "#d6409f"}, {"Purple", "#9141ac"}};
+   return v;
+}
+
+std::string load_coot_plus_setting_string(const char *key, const std::string &dflt) {
+   std::string r = dflt;
+   GKeyFile *kf = g_key_file_new();
+   if (g_key_file_load_from_file(kf, coot_plus_settings_file().c_str(), G_KEY_FILE_NONE, nullptr)) {
+      gchar *v = g_key_file_get_string(kf, "interface", key, nullptr);
+      if (v) { r = v; g_free(v); }
+   }
+   g_key_file_free(kf);
+   return r;
+}
+
+void save_coot_plus_setting_string(const char *key, const std::string &value) {
+   std::string fn = coot_plus_settings_file();
+   GKeyFile *kf = g_key_file_new();
+   g_key_file_load_from_file(kf, fn.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
+   g_key_file_set_string(kf, "interface", key, value.c_str());
+   gchar *dir = g_path_get_dirname(fn.c_str()); g_mkdir_with_parents(dir, 0755); g_free(dir);
+   g_key_file_save_to_file(kf, fn.c_str(), nullptr);
+   g_key_file_free(kf);
+}
+
+void apply_accent(const std::string &hex) {
+   if (!accent_provider) {
+      accent_provider = gtk_css_provider_new();
+      gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(accent_provider),
+                                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+   }
+   // (named colours don't cross style providers, so every accent rule lives here)
+   std::string css = ".coot-plus-task-list row:selected { background-color: alpha(" + hex + ", 0.85); color: #ffffff; }\n"
+                     ".coot-plus-dm-button { background-color: alpha(" + hex + ", 0.9); color: #ffffff; }\n"
+                     ".coot-plus-seq-current { background-color: " + hex + "; color: #ffffff; }\n"
+                     ".coot-plus-msg-info { background-color: alpha(" + hex + ", 0.20); }\n"
+                     ".coot-plus-header .suggested-action, window .suggested-action { background-color: " + hex + "; color: #ffffff; }\n";
+   gtk_css_provider_load_from_string(accent_provider, css.c_str());
+}
+
+void apply_theme(const std::string &theme) { // "dark", "light" or "system"
+   GtkSettings *st = gtk_settings_get_default();
+   if (!st) return;
+   GtkInterfaceColorScheme cs = GTK_INTERFACE_COLOR_SCHEME_DEFAULT;
+   if (theme == "dark")  cs = GTK_INTERFACE_COLOR_SCHEME_DARK;
+   if (theme == "light") cs = GTK_INTERFACE_COLOR_SCHEME_LIGHT;
+   if (g_object_class_find_property(G_OBJECT_GET_CLASS(st), "gtk-interface-color-scheme"))
+      g_object_set(st, "gtk-interface-color-scheme", cs, NULL);
+   // Coot sets the older flag at start-up, which would win otherwise
+   if (g_object_class_find_property(G_OBJECT_GET_CLASS(st), "gtk-application-prefer-dark-theme"))
+      g_object_set(st, "gtk-application-prefer-dark-theme", theme != "light", NULL);
+}
+
+void set_theme(const std::string &theme) { apply_theme(theme); save_coot_plus_setting_string("theme", theme); }
+void set_accent(const std::string &hex)  { apply_accent(hex);  save_coot_plus_setting_string("accent", hex); }
+
+// ------------------------------------------------------------------------------------
+//          workspace presets
+// ------------------------------------------------------------------------------------
+
+void select_task(const std::string &name); // below (sidebar)
+
+nlohmann::json preset_to_json(const preset_t &p) {
+   return {{"name", p.name}, {"task", p.task}, {"description", p.description}, {"symmetry", p.symmetry},
+           {"symm_radius", p.symm_radius}, {"map_radius", p.map_radius}, {"font_size", p.font_size},
+           {"panels", p.panels}, {"coot_action", p.coot_action}, {"problems", p.problems}};
+}
+
+preset_t json_to_preset(const nlohmann::json &j) {
+   preset_t p;
+   p.name = j.value("name", ""); p.task = j.value("task", ""); p.description = j.value("description", "");
+   p.symmetry = j.value("symmetry", false); p.symm_radius = j.value("symm_radius", 0.0);
+   p.map_radius = j.value("map_radius", 0.0); p.font_size = j.value("font_size", 0);
+   p.panels = j.value("panels", -1); p.coot_action = j.value("coot_action", ""); p.problems = j.value("problems", false);
+   return p;
+}
+
+std::vector<preset_t> builtin_presets() {
+   std::vector<preset_t> v;
+   preset_t b; b.name = "Model building"; b.task = "Build"; b.map_radius = 15; b.symmetry = false; b.panels = 1;
+   b.coot_action = "scene_preset_model_building_action";
+   b.description = "Build page, symmetry off, 15 Å map radius, thin slab";
+   v.push_back(b);
+   preset_t l; l.name = "Ligand fitting"; l.task = "Ligands"; l.map_radius = 12; l.symmetry = false; l.panels = 1;
+   l.description = "Ligands page, symmetry off, 12 Å map radius";
+   v.push_back(l);
+   preset_t c; c.name = "Crystal contacts"; c.task = "Symmetry"; c.symmetry = true; c.symm_radius = 25; c.panels = 1;
+   c.description = "Symmetry page, neighbours shown within 25 Å";
+   v.push_back(c);
+   preset_t q; q.name = "Validation"; q.task = "Validate"; q.problems = true; q.panels = 1;
+   q.description = "Validate page, problems marked on the model";
+   v.push_back(q);
+   preset_t f; f.name = "Figure making"; f.task = ""; f.panels = 0; f.font_size = 3; f.symmetry = false;
+   f.coot_action = "scene_preset_figure_making_action";
+   f.description = "Panels hidden, deeper slab, larger labels (bring the panels back with the header buttons)";
+   v.push_back(f);
+   return v;
+}
+
+std::vector<preset_t> user_presets() {
+   std::vector<preset_t> v;
+   nlohmann::json j = read_json_file(config_path("presets.json"), nlohmann::json::array());
+   for (const auto &x : j) v.push_back(json_to_preset(x));
+   return v;
+}
+
+void apply_preset(const preset_t &p) {
+   if (!p.task.empty()) select_task(p.task);
+   if (p.symmetry != symmetry_is_on()) set_symmetry_view(p.symmetry);
+   if (p.symmetry && p.symm_radius > 0) set_symmetry_size(p.symm_radius);
+   if (p.map_radius > 0) set_map_radius(p.map_radius);
+   if (p.font_size > 0) set_font_size(p.font_size);
+   if (p.panels >= 0) {
+      if (sidebar_panel) gtk_widget_set_visible(sidebar_panel, p.panels == 1);
+      if (inspector_panel) gtk_widget_set_visible(inspector_panel, p.panels == 1);
+   }
+   if (!p.coot_action.empty()) g_action_group_activate_action(G_ACTION_GROUP(coot_plus_app), p.coot_action.c_str(), nullptr);
+   if (p.problems) show_problems_on_model(true);
+   graphics_draw();
+   graphics_info_t::add_status_bar_text("Workspace: " + p.name);
+}
+
+std::string current_task_name();
+
+void save_current_as_preset(const std::string &name) {
+   preset_t p;
+   p.name = name;
+   p.task = current_task_name();
+   p.symmetry = symmetry_is_on();
+   p.symm_radius = graphics_info_t::symmetry_search_radius;
+   p.map_radius = get_map_radius();
+   p.font_size = get_font_size();
+   p.panels = (sidebar_panel && gtk_widget_get_visible(sidebar_panel)) ? 1 : 0;
+   p.description = (p.task.empty() ? std::string("") : p.task + " page, ") + (p.symmetry ? "symmetry on" : "symmetry off") +
+                   ", " + format_float(p.map_radius, 0) + " Å map radius";
+   nlohmann::json j = read_json_file(config_path("presets.json"), nlohmann::json::array());
+   nlohmann::json out = nlohmann::json::array();
+   for (const auto &x : j) if (x.value("name", "") != name) out.push_back(x);
+   out.push_back(preset_to_json(p));
+   write_json_file(config_path("presets.json"), out);
+   graphics_info_t::add_status_bar_text("Saved workspace preset “" + name + "”");
+}
+
+void delete_user_preset(const std::string &name) {
+   nlohmann::json j = read_json_file(config_path("presets.json"), nlohmann::json::array()), out = nlohmann::json::array();
+   for (const auto &x : j) if (x.value("name", "") != name) out.push_back(x);
+   write_json_file(config_path("presets.json"), out);
+}
+
+GtkWidget *make_presets_menu_button() {
+   GtkWidget *mb = gtk_menu_button_new();
+   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+   gtk_box_append(GTK_BOX(content), gtk_label_new("Workspace"));
+   GtkWidget *arrow = gtk_label_new("▾");
+   gtk_widget_add_css_class(arrow, "coot-plus-menu-arrow");
+   gtk_box_append(GTK_BOX(content), arrow);
+   gtk_menu_button_set_child(GTK_MENU_BUTTON(mb), content);
+   gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(mb), FALSE);
+   gtk_widget_set_focusable(mb, FALSE);
+   gtk_widget_set_valign(mb, GTK_ALIGN_CENTER);
+   gtk_widget_set_tooltip_text(mb, "Workspace presets: set up the window for a job in one click");
+   GtkWidget *pop = gtk_popover_new();
+   gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb), pop);
+   // rebuild the list each time it opens (user presets may have changed)
+   g_signal_connect(pop, "show", G_CALLBACK(+[] (GtkWidget *pop, gpointer) {
+                       GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+                       add_menu_heading(box, "Workspaces");
+                       for (const auto &p : builtin_presets())
+                          add_fn_entry(box, pop, p.name, p.description.c_str(), [p] () { apply_preset(p); });
+                       std::vector<preset_t> up = user_presets();
+                       if (!up.empty()) {
+                          add_menu_heading(box, "Yours");
+                          for (const auto &p : up)
+                             add_fn_entry(box, pop, p.name, p.description.c_str(), [p] () { apply_preset(p); });
+                       }
+                       gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+                       add_fn_entry(box, pop, "Save current setup as a workspace…",
+                                    "Remembers the task page, symmetry, map radius, label size and panels", [] () {
+                          ask_name("Save Workspace", "Name for this setup:", "My setup",
+                                   [] (const std::string &n) { save_current_as_preset(n); }); });
+                       for (const auto &p : up) {
+                          std::string n = p.name;
+                          add_fn_entry(box, pop, "Delete “" + n + "”", nullptr, [n] () { delete_user_preset(n); });
+                       }
+                       gtk_popover_set_child(GTK_POPOVER(pop), box);
+                    }), nullptr);
+   return mb;
+}
+
+// ------------------------------------------------------------------------------------
+//          customisable Common lists
+// ------------------------------------------------------------------------------------
+
+
+std::vector<std::string> custom_common(const std::string &task) {
+   std::vector<std::string> v;
+   GKeyFile *kf = g_key_file_new();
+   if (g_key_file_load_from_file(kf, coot_plus_settings_file().c_str(), G_KEY_FILE_NONE, nullptr)) {
+      gsize n = 0;
+      std::string key = "common-" + task;
+      gchar **l = g_key_file_get_string_list(kf, "interface", key.c_str(), &n, nullptr);
+      for (gsize i=0; l && i<n; i++) v.push_back(l[i]);
+      g_strfreev(l);
+   }
+   g_key_file_free(kf);
+   return v;
+}
+
+void save_custom_common(const std::string &task, const std::vector<std::string> &keys, bool remove) {
+   std::string fn = coot_plus_settings_file();
+   GKeyFile *kf = g_key_file_new();
+   g_key_file_load_from_file(kf, fn.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
+   std::string key = "common-" + task;
+   if (remove) g_key_file_remove_key(kf, "interface", key.c_str(), nullptr);
+   else {
+      std::vector<const char *> v;
+      for (const auto &k : keys) v.push_back(k.c_str());
+      g_key_file_set_string_list(kf, "interface", key.c_str(), v.data(), v.size());
+   }
+   gchar *dir = g_path_get_dirname(fn.c_str()); g_mkdir_with_parents(dir, 0755); g_free(dir);
+   g_key_file_save_to_file(kf, fn.c_str(), nullptr);
+   g_key_file_free(kf);
+}
+
+
+
+// ------------------------------------------------------------------------------------
+//          console: Script and Snippets tabs
+// ------------------------------------------------------------------------------------
+
+GtkWidget *script_view = nullptr;
+GtkTextBuffer *script_out = nullptr;
+GtkWidget *script_out_view = nullptr;
+GtkWidget *snippets_box = nullptr;
+std::string script_file;
+void refresh_snippets();
+
+GtkTextBuffer *make_output_buffer(GtkWidget *view) {
+   GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
+   gtk_text_buffer_create_tag(b, "in",   "foreground", "#8ab4f8", nullptr);
+   gtk_text_buffer_create_tag(b, "out",  nullptr);
+   gtk_text_buffer_create_tag(b, "err",  "foreground", "#ff7b72", nullptr);
+   gtk_text_buffer_create_tag(b, "hint", "foreground", "#e3b341", nullptr);
+   gtk_text_buffer_create_tag(b, "info", "foreground", "#8b949e", nullptr);
+   return b;
+}
+
+void print_to(GtkTextBuffer *b, GtkWidget *view, const std::string &text, const char *tag) {
+   GtkTextIter end;
+   gtk_text_buffer_get_end_iter(b, &end);
+   gtk_text_buffer_insert_with_tags_by_name(b, &end, text.c_str(), -1, tag, nullptr);
+   gtk_text_buffer_get_end_iter(b, &end);
+   GtkTextMark *m = gtk_text_buffer_create_mark(b, nullptr, &end, FALSE);
+   gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(view), m);
+   gtk_text_buffer_delete_mark(b, m);
+}
+
+std::string script_text() {
+   GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view));
+   GtkTextIter a, e;
+   if (!gtk_text_buffer_get_selection_bounds(b, &a, &e)) gtk_text_buffer_get_bounds(b, &a, &e); // selection, else all
+   char *t = gtk_text_buffer_get_text(b, &a, &e, FALSE);
+   std::string r = t; g_free(t);
+   return r;
+}
+
+void run_script_text() {
+   std::string code = script_text();
+   if (code.find_first_not_of(" \n\t") == std::string::npos) return;
+   if (code.back() != '\n') code += "\n";
+   print_to(script_out, script_out_view, "▶ Run" + std::string(script_file.empty() ? "" : " " + file_basename(script_file)) + "\n", "info");
+   std::string out, err;
+   // always run as a block (several statements)
+   bool ok = coot_plus_run_python(code.find('\n') == code.size() - 1 ? code + "\n" : code, out, err);
+   if (!out.empty()) print_to(script_out, script_out_view, out + (out.back() == '\n' ? "" : "\n"), "out");
+   if (!ok) print_to(script_out, script_out_view, err + "\n", "err");
+   else if (out.empty()) print_to(script_out, script_out_view, "(done)\n", "info");
+   graphics_draw();
+}
+
+void set_script(const std::string &code) {
+   gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view)), code.c_str(), -1);
+   if (console_notebook) gtk_notebook_set_current_page(GTK_NOTEBOOK(console_notebook), 1);
+   gtk_widget_grab_focus(script_view);
+}
+
+void open_script_file() {
+   GtkFileDialog *fd = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(fd, "Open Python Script");
+   gtk_file_dialog_open(fd, GTK_WINDOW(console_window), nullptr, +[] (GObject *src, GAsyncResult *res, gpointer) {
+                           GFile *f = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, nullptr);
+                           if (!f) return;
+                           char *contents = nullptr; gsize len = 0;
+                           if (g_file_load_contents(f, nullptr, &contents, &len, nullptr, nullptr)) {
+                              char *p = g_file_get_path(f);
+                              script_file = p ? p : "";
+                              g_free(p);
+                              set_script(std::string(contents, len));
+                              g_free(contents);
+                           }
+                           g_object_unref(f);
+                        }, nullptr);
+   g_object_unref(fd);
+}
+
+void save_script_file(bool save_as) {
+   std::string text;
+   {
+      GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view));
+      GtkTextIter a, e; gtk_text_buffer_get_bounds(b, &a, &e);
+      char *t = gtk_text_buffer_get_text(b, &a, &e, FALSE); text = t; g_free(t);
+   }
+   if (!save_as && !script_file.empty()) {
+      std::ofstream f(script_file); f << text;
+      print_to(script_out, script_out_view, "Saved " + script_file + "\n", "info");
+      return;
+   }
+   GtkFileDialog *fd = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(fd, "Save Python Script");
+   gtk_file_dialog_set_initial_name(fd, script_file.empty() ? "coot-script.py" : file_basename(script_file).c_str());
+   std::string *copy = new std::string(text);
+   gtk_file_dialog_save(fd, GTK_WINDOW(console_window), nullptr, +[] (GObject *src, GAsyncResult *res, gpointer d) {
+                           std::string *t = static_cast<std::string *>(d);
+                           GFile *f = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, nullptr);
+                           if (f) {
+                              char *p = g_file_get_path(f);
+                              if (p) { script_file = p; std::ofstream o(p); o << *t;
+                                       print_to(script_out, script_out_view, "Saved " + script_file + "\n", "info"); }
+                              g_free(p);
+                              g_object_unref(f);
+                           }
+                           delete t;
+                        }, copy);
+   g_object_unref(fd);
+}
+
+nlohmann::json load_user_snippets() { return read_json_file(config_path("snippets.json"), nlohmann::json::array()); }
+
+GtkWidget *make_script_page() {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_set_margin_start(box, 8); gtk_widget_set_margin_end(box, 8);
+   gtk_widget_set_margin_top(box, 8);   gtk_widget_set_margin_bottom(box, 8);
+   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   GtkWidget *open = gtk_button_new_with_label("Open…");
+   GtkWidget *save = gtk_button_new_with_label("Save");
+   GtkWidget *save_as = gtk_button_new_with_label("Save As…");
+   GtkWidget *as_snip = gtk_button_new_with_label("Save as Snippet…");
+   GtkWidget *spacer = gtk_label_new("");
+   gtk_widget_set_hexpand(spacer, TRUE);
+   GtkWidget *run = gtk_button_new_with_label("Run  (⌘Return)");
+   gtk_widget_add_css_class(run, "suggested-action");
+   gtk_widget_set_tooltip_text(run, "Runs the selected lines, or the whole script if nothing is selected");
+   for (GtkWidget *b : {open, save, save_as, as_snip}) gtk_box_append(GTK_BOX(bar), b);
+   gtk_box_append(GTK_BOX(bar), spacer);
+   gtk_box_append(GTK_BOX(bar), run);
+   g_signal_connect(open, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { open_script_file(); }), nullptr);
+   g_signal_connect(save, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { save_script_file(false); }), nullptr);
+   g_signal_connect(save_as, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { save_script_file(true); }), nullptr);
+   g_signal_connect(run, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { run_script_text(); }), nullptr);
+   g_signal_connect(as_snip, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) {
+                       ask_name("Save Snippet", "Name for this snippet:", "My snippet", [] (const std::string &n) {
+                          GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view));
+                          GtkTextIter a, e; gtk_text_buffer_get_bounds(b, &a, &e);
+                          char *t = gtk_text_buffer_get_text(b, &a, &e, FALSE);
+                          nlohmann::json j = load_user_snippets();
+                                  nlohmann::json out = nlohmann::json::array();
+                          for (const auto &x : j) if (x.value("title", "") != n) out.push_back(x);
+                          out.push_back({{"title", n}, {"description", "Your snippet"}, {"code", std::string(t)}});
+                          g_free(t);
+                          write_json_file(config_path("snippets.json"), out);
+                          refresh_snippets();
+                          print_to(script_out, script_out_view, "Saved snippet “" + n + "”\n", "info");
+                       }); }), nullptr);
+
+   script_view = gtk_text_view_new();
+   gtk_text_view_set_monospace(GTK_TEXT_VIEW(script_view), TRUE);
+   gtk_text_view_set_left_margin(GTK_TEXT_VIEW(script_view), 8);
+   gtk_text_view_set_top_margin(GTK_TEXT_VIEW(script_view), 6);
+   gtk_widget_add_css_class(script_view, "coot-plus-console-in");
+   gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view)),
+                            "# A Coot script: coot, coot_utils and coot_gui are loaded.\n"
+                            "# Pick one from Snippets, or write your own, then Run.\n\n", -1);
+   GtkEventController *keys = gtk_event_controller_key_new();
+   g_signal_connect(keys, "key-pressed", G_CALLBACK(+[] (GtkEventControllerKey *, guint keyval, guint, GdkModifierType st, gpointer) -> gboolean {
+                       if ((keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) && (st & (GDK_META_MASK | GDK_CONTROL_MASK))) {
+                          run_script_text(); return TRUE; }
+                       if (keyval == GDK_KEY_Tab && !(st & GDK_SHIFT_MASK)) { // indent with 4 spaces
+                          gtk_text_buffer_insert_at_cursor(gtk_text_view_get_buffer(GTK_TEXT_VIEW(script_view)), "    ", -1);
+                          return TRUE; }
+                       return FALSE; }), nullptr);
+   gtk_widget_add_controller(script_view, keys);
+   GtkWidget *sw = gtk_scrolled_window_new();
+   gtk_widget_set_vexpand(sw, TRUE);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), script_view);
+
+   script_out_view = gtk_text_view_new();
+   gtk_text_view_set_monospace(GTK_TEXT_VIEW(script_out_view), TRUE);
+   gtk_text_view_set_editable(GTK_TEXT_VIEW(script_out_view), FALSE);
+   gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(script_out_view), GTK_WRAP_WORD_CHAR);
+   gtk_text_view_set_left_margin(GTK_TEXT_VIEW(script_out_view), 8);
+   script_out = make_output_buffer(script_out_view);
+   GtkWidget *osw = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(osw), 110);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(osw), script_out_view);
+   GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+   gtk_paned_set_start_child(GTK_PANED(paned), sw);
+   gtk_paned_set_end_child(GTK_PANED(paned), osw);
+   gtk_paned_set_position(GTK_PANED(paned), 300);
+   gtk_widget_set_vexpand(paned, TRUE);
+   gtk_box_append(GTK_BOX(box), bar);
+   gtk_box_append(GTK_BOX(box), paned);
+   return box;
+}
+
+void refresh_snippets() {
+   if (!snippets_box) return;
+   GtkWidget *c;
+   while ((c = gtk_widget_get_first_child(snippets_box)) != nullptr) gtk_box_remove(GTK_BOX(snippets_box), c);
+   auto add_row = [] (const std::string &title, const std::string &desc, const std::string &code, bool user) {
+      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+      gtk_widget_add_css_class(row, "coot-plus-molecule-row");
+      GtkWidget *texts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_set_hexpand(texts, TRUE);
+      GtkWidget *t = gtk_label_new(title.c_str());
+      GtkWidget *d = gtk_label_new(desc.c_str());
+      gtk_label_set_xalign(GTK_LABEL(t), 0.0);
+      gtk_label_set_xalign(GTK_LABEL(d), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(d), TRUE);
+      gtk_widget_add_css_class(t, "coot-plus-map-name");
+      gtk_widget_add_css_class(d, "coot-plus-dim");
+      gtk_box_append(GTK_BOX(texts), t);
+      gtk_box_append(GTK_BOX(texts), d);
+      gtk_widget_set_tooltip_text(texts, code.c_str());
+      GtkWidget *edit = gtk_button_new_with_label("Open in Script");
+      GtkWidget *run = gtk_button_new_with_label("Run");
+      gtk_widget_set_valign(edit, GTK_ALIGN_CENTER);
+      gtk_widget_set_valign(run, GTK_ALIGN_CENTER);
+      g_signal_connect_data(edit, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                               script_file.clear(); set_script(*static_cast<std::string *>(d)); }),
+                            new std::string(code), +[] (gpointer d, GClosure *) { delete static_cast<std::string *>(d); }, GConnectFlags(0));
+      g_signal_connect_data(run, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                               script_file.clear(); set_script(*static_cast<std::string *>(d)); run_script_text(); }),
+                            new std::string(code), +[] (gpointer d, GClosure *) { delete static_cast<std::string *>(d); }, GConnectFlags(0));
+      gtk_box_append(GTK_BOX(row), texts);
+      gtk_box_append(GTK_BOX(row), edit);
+      gtk_box_append(GTK_BOX(row), run);
+      if (user) {
+         GtkWidget *del = gtk_button_new_with_label("✕");
+         gtk_widget_add_css_class(del, "flat");
+         gtk_widget_set_valign(del, GTK_ALIGN_CENTER);
+         gtk_widget_set_tooltip_text(del, "Delete this snippet");
+         g_signal_connect_data(del, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                                  std::string n = *static_cast<std::string *>(d);
+                                  nlohmann::json j = load_user_snippets();
+                                  nlohmann::json out = nlohmann::json::array();
+                                  for (const auto &x : j) if (x.value("title", "") != n) out.push_back(x);
+                                  write_json_file(config_path("snippets.json"), out);
+                                  g_idle_add(+[] (gpointer) -> gboolean { refresh_snippets(); return G_SOURCE_REMOVE; }, nullptr); }),
+                               new std::string(title), +[] (gpointer d, GClosure *) { delete static_cast<std::string *>(d); }, GConnectFlags(0));
+         gtk_box_append(GTK_BOX(row), del);
+      }
+      gtk_box_append(GTK_BOX(snippets_box), row);
+   };
+   nlohmann::json user = load_user_snippets();
+   if (!user.empty()) {
+      gtk_box_append(GTK_BOX(snippets_box), section_label("Yours"));
+      for (const auto &x : user) add_row(x.value("title", ""), x.value("description", ""), x.value("code", ""), true);
+   }
+   gtk_box_append(GTK_BOX(snippets_box), section_label("Ready-made"));
+   nlohmann::json built = py_json("__cp_plus.snippets()");
+   if (built.is_array())
+      for (const auto &x : built) add_row(x.value("title", ""), x.value("description", ""), x.value("code", ""), false);
+}
+
+GtkWidget *make_snippets_page() {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_set_margin_start(box, 10); gtk_widget_set_margin_end(box, 10);
+   gtk_widget_set_margin_top(box, 8);    gtk_widget_set_margin_bottom(box, 8);
+   GtkWidget *intro = gtk_label_new("Small scripts you can run as they are, or open in the Script tab to change. "
+                                    "Most act on the model at the centre of the screen. Save your own from the Script tab.");
+   gtk_label_set_wrap(GTK_LABEL(intro), TRUE);
+   gtk_label_set_xalign(GTK_LABEL(intro), 0.0);
+   gtk_widget_add_css_class(intro, "coot-plus-dim");
+   snippets_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+   GtkWidget *sw = gtk_scrolled_window_new();
+   gtk_widget_set_vexpand(sw, TRUE);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), snippets_box);
+   gtk_box_append(GTK_BOX(box), intro);
+   gtk_box_append(GTK_BOX(box), sw);
+   refresh_snippets();
+   return box;
 }
 
 GtkWidget *make_card(GtkWidget *parent, const std::string &title) {
@@ -3991,7 +5609,11 @@ GtkWidget *make_inspector() {
          gtk_box_append(GTK_BOX(row), b);
       }
       gtk_box_append(GTK_BOX(card), row);
+      gtk_box_append(GTK_BOX(card), make_stepping_row());
    }
+
+   // --- Ligand (only when centred on one)
+   make_ligand_card(box);
 
    // --- Maps
    card = make_card(box, "Maps");
@@ -4151,7 +5773,7 @@ void load_coot_plus_css() {
       ".coot-plus-task-list { background: transparent; padding: 8px 6px 6px 6px; }\n"
       ".coot-plus-task-list row { padding: 6px 10px; border-radius: 7px; margin: 1px 0; }\n"
       ".coot-plus-task-list row:hover { background-color: alpha(currentColor, 0.07); }\n"
-      ".coot-plus-task-list row:selected { background-color: alpha(@theme_selected_bg_color, 0.85); color: @theme_selected_fg_color; }\n"
+
       ".coot-plus-sidebar-sep { margin: 2px 12px; opacity: 0.5; }\n"
       ".coot-plus-task-page { padding: 6px 6px 16px 6px; }\n"
       ".coot-plus-page-title { font-weight: 700; font-size: 1.15em; margin: 4px 8px 0 8px; }\n"
@@ -4184,7 +5806,7 @@ void load_coot_plus_css() {
       ".coot-plus-close:hover { opacity: 1; background-color: alpha(#e5534b, 0.25); }\n"
       ".coot-plus-menu-entry { padding: 5px 12px; }\n"
       ".coot-plus-dm-button { padding: 3px 10px; border-radius: 7px; font-weight: 600;"
-      "  background-color: alpha(@theme_selected_bg_color, 0.85); color: @theme_selected_fg_color; margin-right: 6px; }\n"
+      "  margin-right: 6px; }\n"
       ".coot-plus-help { border-top: 1px solid alpha(currentColor, 0.10); padding: 8px 12px 10px 12px;"
       "  background-color: alpha(currentColor, 0.04); }\n"
       ".coot-plus-help-title { font-weight: 700; font-size: 0.9em; }\n"
@@ -4198,7 +5820,7 @@ void load_coot_plus_css() {
       ".coot-plus-message { padding: 6px 12px; border-top: 1px solid alpha(currentColor, 0.12); }\n"
       ".coot-plus-msg-error   { background-color: alpha(#e5534b, 0.22); }\n"
       ".coot-plus-msg-warning { background-color: alpha(#f0b429, 0.20); }\n"
-      ".coot-plus-msg-info    { background-color: alpha(@theme_selected_bg_color, 0.20); }\n"
+
       ".coot-plus-msg-icon { font-size: 1.1em; }\n"
       ".coot-plus-star { color: #f0b429; }\n"
       ".coot-plus-swatch { min-width: 0; min-height: 0; padding: 0; }\n"
@@ -4211,6 +5833,14 @@ void load_coot_plus_css() {
       ".coot-plus-type-model { color: #8ab4f8; background-color: alpha(#8ab4f8, 0.15); }\n"
       ".coot-plus-type-map   { color: #7ee2a8; background-color: alpha(#7ee2a8, 0.15); }\n"
       ".coot-plus-type-diff  { color: #f5a97f; background-color: alpha(#f5a97f, 0.15); }\n"
+      ".coot-plus-seq-strip { min-height: 26px; }\n"
+      ".coot-plus-seq-cell { font-family: monospace; font-size: 0.9em; padding: 2px 2px; border-radius: 3px; }\n"
+      ".coot-plus-seq-cell:hover { background-color: alpha(currentColor, 0.15); }\n"
+      ".coot-plus-seq-het { opacity: 0.6; }\n"
+      ".coot-plus-seq-current { font-weight: 700; }\n"
+      ".coot-plus-ligand-card { border: 1px solid alpha(#e3b341, 0.35); }\n"
+      ".coot-plus-serious { color: #ff7b72; }\n"
+      ".coot-plus-minor { color: #e3b341; }\n"
       // search results
       ".coot-plus-results row { border-radius: 6px; }\n";
    GtkCssProvider *provider = gtk_css_provider_new();
@@ -4284,6 +5914,8 @@ void coot_plus_setup_ui(GtkApplication *application) {
    g_info("coot-plus: %zu commands registered", commands.size());
 
    load_coot_plus_css();
+   apply_accent(load_coot_plus_setting_string("accent", "#3584e4"));
+   apply_theme(load_coot_plus_setting_string("theme", "dark"));
 
    GtkWidget *main_hbox     = widget_from_builder("main_window_hbox");
    GtkWidget *toolbar_outer = widget_from_builder("main_window_toolbar_hbox_outer");
@@ -4298,7 +5930,15 @@ void coot_plus_setup_ui(GtkApplication *application) {
 
    apply_toolbar_tooltips();
    compact_sidebar = load_coot_plus_setting_bool("compact-sidebar", false);
-   graphics_info_t::trackpad_drag_rotates = load_coot_plus_setting_bool("trackpad-drag-rotates", true);
+   {
+      GKeyFile *kf = g_key_file_new();
+      if (g_key_file_load_from_file(kf, coot_plus_settings_file().c_str(), G_KEY_FILE_NONE, nullptr)) {
+         gchar *pf = g_key_file_get_string(kf, "interface", "phenix-folder", nullptr);
+         if (pf) { phenix_folder = pf; g_free(pf); }
+      }
+      g_key_file_free(kf);
+   }
+   graphics_info_t::trackpad_drag_rotates = load_coot_plus_setting_bool("trackpad-drag-rotates", false);
    graphics_info_t::double_click_centres  = load_coot_plus_setting_bool("double-click-centres", true);
    if (GTK_IS_OVERLAY(graphics)) gtk_overlay_add_overlay(GTK_OVERLAY(graphics), make_mode_banner());
    if (GtkWidget *vbox = widget_from_builder("main_window_vbox")) {
@@ -4360,6 +6000,7 @@ void coot_plus_setup_ui(GtkApplication *application) {
    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
    gtk_widget_set_valign(right, GTK_ALIGN_CENTER);
    graphics_info_t::scroll_wheel_zooms = load_coot_plus_setting_bool("scroll-wheel-zooms", false);
+   gtk_box_append(GTK_BOX(right), make_presets_menu_button());
    gtk_box_append(GTK_BOX(right), make_scroll_mode_switch());
    gtk_box_append(GTK_BOX(right), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
    struct hb { const char *icon; const char *tip; const char *toolbar_id; };

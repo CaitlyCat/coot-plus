@@ -20,6 +20,7 @@
 
 dist_pkgpython_PYTHON = \
                         coot_utils.py        get_ebi.py      mutate.py        \
+                        coot_plus.py                                          \
    background_demo.py   hello.py             raster3d.py                      \
    brute_lsqman.py                                           refmac.py        \
    coot_gui.py          filter.py            libcheck.py                      \
