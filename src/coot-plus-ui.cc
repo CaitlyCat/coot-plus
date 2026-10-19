@@ -59,6 +59,8 @@ GtkApplication *coot_plus_app = nullptr;
 std::vector<command_t> commands;
 std::map<std::string, int> use_count; // key: label + path
 
+bool updating_widgets = false; // guard: don't act on our own set_active()/set_value()
+
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_priorities();
 
@@ -201,7 +203,7 @@ int priority_for(const std::string &label) {
       {"labelsizebigger", 25}, {"labelsizesmaller", 20}, {"rotamers", 25}, {"autofitrotamer", 25},
       {"simplemutate", 20}, {"mutateautofit", 25}, {"fillpartialresidues", 20}, {"addwaterhere", 20},
       {"undo", 20}, {"redo", 10}, {"residueinfo", 20}, {"increasecontourlevel", 15},
-      {"decreasecontourlevel", 15}};
+      {"decreasecontourlevel", 15}, {"scrollwheelzooms", 40}, {"togglescrollwheelzoomcontour", 30}};
    auto it = m.find(squash(label));
    return it == m.end() ? 0 : it->second;
 }
@@ -733,6 +735,92 @@ void set_symmetry_view(bool state) {
    graphics_draw();
 }
 
+// ------------------------------------------------------------------------------------
+//                       scroll wheel: zoom or map contour (remembered)
+// ------------------------------------------------------------------------------------
+
+GtkWidget *scroll_zoom_button    = nullptr;
+GtkWidget *scroll_contour_button = nullptr;
+
+std::string coot_plus_settings_file() {
+   return std::string(g_get_user_config_dir()) + "/coot-plus/settings.ini";
+}
+
+void save_coot_plus_setting_bool(const char *key, bool value) {
+   std::string fn = coot_plus_settings_file();
+   GKeyFile *kf = g_key_file_new();
+   g_key_file_load_from_file(kf, fn.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr); // ok if missing
+   g_key_file_set_boolean(kf, "interface", key, value);
+   gchar *dir = g_path_get_dirname(fn.c_str());
+   g_mkdir_with_parents(dir, 0755);
+   g_free(dir);
+   GError *error = nullptr;
+   if (!g_key_file_save_to_file(kf, fn.c_str(), &error)) {
+      g_warning("coot-plus: could not save %s: %s", fn.c_str(), error->message);
+      g_error_free(error);
+   }
+   g_key_file_free(kf);
+}
+
+bool load_coot_plus_setting_bool(const char *key, bool default_value) {
+   GKeyFile *kf = g_key_file_new();
+   bool r = default_value;
+   if (g_key_file_load_from_file(kf, coot_plus_settings_file().c_str(), G_KEY_FILE_NONE, nullptr)) {
+      GError *error = nullptr;
+      gboolean v = g_key_file_get_boolean(kf, "interface", key, &error);
+      if (error) g_error_free(error); else r = v;
+   }
+   g_key_file_free(kf);
+   return r;
+}
+
+void sync_scroll_buttons() {
+   bool z = get_scroll_wheel_zooms();
+   updating_widgets = true;
+   if (scroll_zoom_button && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(scroll_zoom_button)) != z)
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(scroll_zoom_button), z);
+   if (scroll_contour_button && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(scroll_contour_button)) == z)
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(scroll_contour_button), !z);
+   updating_widgets = false;
+}
+
+void set_scroll_mode(bool zooms) {
+   set_scroll_wheel_zooms(zooms);
+   save_coot_plus_setting_bool("scroll-wheel-zooms", zooms);
+   sync_scroll_buttons();
+}
+
+GtkWidget *make_scroll_mode_switch() {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   gtk_widget_add_css_class(box, "linked");
+   gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+   gtk_widget_set_margin_start(box, 8);
+   gtk_widget_set_tooltip_text(box, "What the mouse scroll wheel does in the 3D view.\n"
+                               "Hold Shift while scrolling to do the other one.");
+   GtkWidget *label = gtk_label_new("Scroll");
+   gtk_widget_add_css_class(label, "dim-label");
+   gtk_widget_set_margin_end(label, 6);
+   scroll_zoom_button    = gtk_toggle_button_new_with_label("Zoom");
+   scroll_contour_button = gtk_toggle_button_new_with_label("Contour");
+   gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(scroll_contour_button), GTK_TOGGLE_BUTTON(scroll_zoom_button));
+   for (GtkWidget *b : {scroll_zoom_button, scroll_contour_button}) {
+      gtk_widget_set_focusable(b, FALSE);
+      g_signal_connect(b, "toggled", G_CALLBACK(+[] (GtkToggleButton *t, gpointer) {
+                          if (updating_widgets || !gtk_toggle_button_get_active(t)) return;
+                          set_scroll_mode(GTK_WIDGET(t) == scroll_zoom_button);
+                       }), nullptr);
+   }
+   GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   gtk_widget_set_valign(outer, GTK_ALIGN_CENTER);
+   gtk_box_append(GTK_BOX(outer), label);
+   gtk_box_append(GTK_BOX(box), scroll_zoom_button);
+   gtk_box_append(GTK_BOX(box), scroll_contour_button);
+   gtk_box_append(GTK_BOX(outer), box);
+   gtk_widget_set_margin_start(outer, 8);
+   sync_scroll_buttons();
+   return outer;
+}
+
 GtkWidget *sidebar_panel   = nullptr; // set in coot_plus_setup_ui()
 GtkWidget *inspector_panel = nullptr;
 
@@ -758,6 +846,12 @@ void add_coot_plus_commands() {
        [] () { step_label_size(1); });
    add("Label Size Smaller", "Inspector > Labels", "font text label size smaller decrease",
        [] () { step_label_size(-1); });
+   add("Scroll Wheel Zooms", "Toolbar > Scroll", "mouse scroll wheel zoom in out magnify",
+       [] () { set_scroll_mode(true); });
+   add("Scroll Wheel Changes Map Contour", "Toolbar > Scroll", "mouse scroll wheel contour level sigma map",
+       [] () { set_scroll_mode(false); });
+   add("Toggle Scroll Wheel Zoom/Contour", "Toolbar > Scroll", "mouse scroll wheel zoom contour switch",
+       [] () { set_scroll_mode(!get_scroll_wheel_zooms()); });
    add("Show/Hide Task Sidebar", "Toolbar > Tasks", "panel sidebar tasks workspace",
        [] () { if (sidebar_panel) gtk_widget_set_visible(sidebar_panel, !gtk_widget_get_visible(sidebar_panel)); });
    add("Show/Hide Inspector", "Toolbar > Inspector", "panel inspector properties",
@@ -832,7 +926,6 @@ const command_t *resolve_tool(const std::string &ref) {
 
 GtkWidget *symmetry_switch_sidebar   = nullptr;
 GtkWidget *symmetry_switch_inspector = nullptr;
-bool updating_widgets = false; // guard: don't act on our own set_active()/set_value()
 
 GtkWidget *make_tool_button(const command_t &c, const std::string &short_label = "", bool show_shortcut = true) {
 
@@ -1203,6 +1296,7 @@ gboolean inspector_tick(gpointer) {
    update_selection_section();
    update_maps_section();
    update_misc_section();
+   sync_scroll_buttons();
    return G_SOURCE_CONTINUE;
 }
 
@@ -1391,6 +1485,8 @@ void coot_plus_setup_ui(GtkApplication *application) {
    gtk_box_append(GTK_BOX(search_box), make_panel_toggle("Tasks", "Show/hide the task sidebar", side));
    gtk_box_append(GTK_BOX(search_box), make_search_entry());
    gtk_box_append(GTK_BOX(search_box), make_panel_toggle("Inspector", "Show/hide the inspector", insp));
+   graphics_info_t::scroll_wheel_zooms = load_coot_plus_setting_bool("scroll-wheel-zooms", false);
+   gtk_box_append(GTK_BOX(search_box), make_scroll_mode_switch());
    gtk_box_insert_child_after(GTK_BOX(toolbar_outer), search_box, toolbar_left);
 
    GtkWidget *window = graphics_info_t::get_main_window();

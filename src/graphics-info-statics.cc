@@ -198,6 +198,7 @@ short int graphics_info_t::control_key_for_rotate_flag = 1;
 short int graphics_info_t::pick_pending_flag = 0;
 int    graphics_info_t::a_is_pressed = 0;
 int    graphics_info_t::shift_is_pressed = 0 ;       // false
+bool   graphics_info_t::scroll_wheel_zooms = false;  // Coot+
 int    graphics_info_t::y_is_pressed = 0 ;       // false
 int    graphics_info_t::z_is_pressed = 0 ;       // false
 std::pair<double, double> graphics_info_t::mouse_begin         = std::pair<double, double> (0,0);
