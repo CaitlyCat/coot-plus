@@ -3905,6 +3905,11 @@ void set_scroll_wheel_zooms(int state) {
                                               : "Scroll wheel: map contour (hold Shift to zoom)");
 }
 
+void set_trackpad_drag_rotates(int state) { graphics_info_t::trackpad_drag_rotates = (state != 0); }
+int get_trackpad_drag_rotates() { return graphics_info_t::trackpad_drag_rotates ? 1 : 0; }
+void set_double_click_centres(int state) { graphics_info_t::double_click_centres = (state != 0); }
+int get_double_click_centres() { return graphics_info_t::double_click_centres ? 1 : 0; }
+
 int get_scroll_wheel_zooms() {
    return graphics_info_t::scroll_wheel_zooms ? 1 : 0;
 }

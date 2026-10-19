@@ -1798,6 +1798,12 @@ int scroll_wheel_map();
 void set_scroll_wheel_zooms(int state);
 /*! \brief return 1 if the scroll wheel zooms, 0 if it changes the contour level */
 int get_scroll_wheel_zooms();
+/*! \brief Coot+: 1: two-finger drag on a trackpad rotates the view (Shift: contour level), 0: it scrolls like a mouse wheel */
+void set_trackpad_drag_rotates(int state);
+int get_trackpad_drag_rotates();
+/*! \brief Coot+: 1: double-clicking an atom centres on it, 0: it labels the atom (Coot's default) */
+void set_double_click_centres(int state);
+int get_double_click_centres();
 /*! \brief save previous colour map for molecule number imol
 
   (used so that the map colour can be restored on Cancel) */

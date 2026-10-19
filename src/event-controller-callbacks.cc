@@ -603,7 +603,13 @@ graphics_info_t::on_glarea_click(GtkGestureClick *controller,
                // std::cout << ":::::::::::::::::::::::::::: this path ::::::::::::::::::::::::::::::" << std::endl;
                bool intermediate_atoms_only_flag = false;
                pick_info naii = atom_pick_gtk3(intermediate_atoms_only_flag);
-               if (naii.success) {
+               if (naii.success && double_click_centres) {
+                  // Coot+: double-click centres on the atom (option-click does too)
+                  setRotationCentre(naii.atom_index, naii.imol);
+                  add_picked_atom_info_to_status_bar(naii.imol, naii.atom_index);
+                  handled = true;
+                  graphics_draw();
+               } else if (naii.success) {
                   int imol = naii.imol;
                   molecules[imol].add_to_labelled_atom_list(naii.atom_index);
                   add_picked_atom_info_to_status_bar(imol, naii.atom_index);
@@ -1148,6 +1154,37 @@ graphics_info_t::on_glarea_scrolled(GtkEventControllerScroll *controller,
    GdkModifierType modifier = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
    control_is_pressed = (modifier & GDK_CONTROL_MASK);
    shift_is_pressed = (modifier & GDK_SHIFT_MASK);
+
+   // Coot+: a trackpad sends smooth scrolls in surface (pixel) units; a mouse wheel in
+   // wheel units. Two-finger drag rotates the view (no middle button or click-drag
+   // needed) and Shift + two-finger drag changes the contour in steps.
+   if (trackpad_drag_rotates && !control_is_pressed &&
+       gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_SURFACE) {
+      if (shift_is_pressed) {
+         trackpad_contour_accumulator += dy;
+         const double step_px = 12.0;
+         while (std::abs(trackpad_contour_accumulator) >= step_px) {
+            double dir = trackpad_contour_accumulator > 0 ? 1.0 : -1.0;
+            trackpad_contour_accumulator -= dir * step_px;
+            if (graphics_info_t::glareas.size() > 0)
+               g_idle_add(idle_contour_function, graphics_info_t::glareas[0]);
+            contour_level_scroll_scrollable_map(dir);
+         }
+         return;
+      }
+      GtkAllocation allocation = get_glarea_allocation();
+      float w = static_cast<float>(allocation.width);
+      float h = static_cast<float>(allocation.height);
+      if (w > 0 && h > 0 && (dx != 0.0 || dy != 0.0)) {
+         // macOS natural scrolling: the deltas are opposite to the finger movement
+         float fx = -dx, fy = -dy;
+         glm::quat tb_quat = trackball_to_quaternion(0.0f, 0.0f, 2.0f * fx / w, -2.0f * fy / h, trackball_size);
+         tb_quat = glm::conjugate(tb_quat);
+         view_quaternion = glm::normalize(tb_quat * view_quaternion);
+         graphics_draw();
+      }
+      return;
+   }
 
    bool handled = false;
    if (false)

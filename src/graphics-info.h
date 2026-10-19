@@ -887,6 +887,11 @@ public:
    // Coot+: true: the scroll wheel zooms (Shift-scroll changes the contour);
    //        false: the scroll wheel changes the contour (Shift-scroll zooms) - Coot's default
    static bool scroll_wheel_zooms;
+   // Coot+: two-finger drag on a trackpad rotates the view (mouse wheels are unaffected)
+   static bool trackpad_drag_rotates;
+   static double trackpad_contour_accumulator; // Shift + two-finger drag: pixels until the next contour step
+   // Coot+: double-click an atom centres on it (false: labels it, Coot's default)
+   static bool double_click_centres;
    static int y_is_pressed;
    static int z_is_pressed;
    static int a_is_pressed;
