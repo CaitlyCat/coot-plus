@@ -30,6 +30,7 @@
 #include "gtk/gtkshortcut.h"
 #include "utils/coot-utils.hh"
 #include "widget-from-builder.hh"
+#include "coot-plus-ui.hh"
 
 #ifdef HAVE_VTE
 #include "vte.hh"
@@ -492,10 +493,15 @@ void on_python_scripting_entry_activated(GtkEntry* entry, gpointer user_data) {
    g_info("Running python command: '%s'", cmd.c_str());
 
    std::string output, error_message;
+   // hold the GIL: this can be reached while Python has released it (e.g. a signal
+   // emitted from a PyGObject script)
+   PyGILState_STATE gil = PyGILState_Ensure();
    bool ok = run_python_console_command(cmd, output, error_message);
+   PyGILState_Release(gil);
 
    // add a copy of the text to history
    graphics_info_t::command_history.add_to_history(cmd);
+   if (ok) coot_plus_log_command(cmd);
 
    if (ok) {
       if (!output.empty())
@@ -504,6 +510,8 @@ void on_python_scripting_entry_activated(GtkEntry* entry, gpointer user_data) {
       gtk_editable_set_text(GTK_EDITABLE(entry), "");
    } else {
       graphics_info_t::add_status_bar_text(console_status_text("Python error: " + error_message));
+      coot_plus_message("error", "Python: " + console_status_text(error_message),
+                        "Your command is still in the box - fix it and press Return");
       // keep the command so that it can be corrected
       gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
    }

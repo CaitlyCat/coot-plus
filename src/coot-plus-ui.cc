@@ -39,6 +39,10 @@
 #include "cc-interface.hh"
 #include "widget-from-builder.hh"
 #include "coot-plus-ui.hh"
+#include "c-interface-preferences.h"
+#include "coot-preferences.h"
+#include "utils/logging.hh"
+extern logging logger;
 
 namespace {
 
@@ -75,6 +79,24 @@ void set_classic_toolbar_visible(bool state);
 void update_molecules_section(); // inspector Molecules card
 void undo_view_change();
 void clear_drawn_objects();
+void log_line(const std::string &line);
+// Coot records calls in its history - including the getters Coot+ polls. History made
+// while one of our timers runs is not the user's, so it is skipped by the command log.
+std::vector<std::pair<size_t, size_t> > history_ignored; // [begin, end)
+struct ignore_history_scope {
+   size_t begin;
+   ignore_history_scope() : begin(graphics_info_t::history_list.history_strings.size()) {}
+   ~ignore_history_scope() {
+      size_t end = graphics_info_t::history_list.history_strings.size();
+      if (end > begin) history_ignored.push_back(std::make_pair(begin, end));
+   }
+};
+void show_command_log();
+void cancel_pick_modes();
+void load_favourites();
+void rebuild_favourites();
+std::vector<std::string> favourites; // command keys (favourite tools)
+GtkWidget *favourites_box = nullptr;
 
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_priorities();
@@ -459,6 +481,7 @@ void give_focus_back_to_graphics() {
 void run_command(const command_t &c) {
 
    use_count[c.label + "|" + c.path]++;
+   log_line("# " + (c.path.empty() ? std::string() : c.path + " > ") + c.label);
 
    if (c.run) {
       c.run();
@@ -907,6 +930,10 @@ void add_coot_plus_commands() {
        [] () { undo_view_change(); });
    add("Clear Drawn Objects (dots, overlaps, markers)", "Validate", "clear remove dots overlaps contact spheres markers generic objects colours",
        [] () { clear_drawn_objects(); });
+   add("Command Log", "Header > More", "history log record replay script python macro commands",
+       [] () { show_command_log(); });
+   add("Cancel Pick Mode (Esc)", "Banner", "cancel stop pick click mode escape",
+       [] () { cancel_pick_modes(); });
    add("Show/Hide Classic Build Toolbar", "Build", "classic toolbar old buttons right column vertical",
        [] () { if (classic_toolbar) set_classic_toolbar_visible(!gtk_widget_get_visible(classic_toolbar)); });
    add("Show/Hide Task Sidebar", "Toolbar > Tasks", "panel sidebar tasks workspace",
@@ -1151,6 +1178,8 @@ std::string help_text_for(const command_t &c) {
    return t;
 }
 
+void attach_favourite_menu(GtkWidget *button, const command_t &c); // below
+
 GtkWidget *make_tool_button(const command_t &c, const std::string &short_label = "", bool show_shortcut = true) {
 
    GtkWidget *button = gtk_button_new();
@@ -1163,6 +1192,7 @@ GtkWidget *make_tool_button(const command_t &c, const std::string &short_label =
    gtk_widget_set_focusable(button, FALSE); // keep keyboard shortcuts going to the graphics
    gtk_widget_set_tooltip_text(button, tooltip_for(c).c_str());
    attach_hover_help(button, short_label.empty() ? c.label : short_label, help_text_for(c));
+   attach_favourite_menu(button, c);
 
    command_t *copy = new command_t(c);
    g_signal_connect_data(button, "clicked",
@@ -1245,6 +1275,36 @@ GtkWidget *make_task_sidebar() {
    gtk_list_box_set_selection_mode(GTK_LIST_BOX(task_list), GTK_SELECTION_BROWSE);
    gtk_widget_add_css_class(task_list, "coot-plus-task-list");
    gtk_widget_set_focusable(task_list, FALSE);
+
+   {
+      // Favourites: the first task
+      GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+      GtkWidget *star = gtk_label_new("\u2605");
+      gtk_widget_add_css_class(star, "coot-plus-star");
+      gtk_box_append(GTK_BOX(row_box), star);
+      GtkWidget *rl = gtk_label_new("Favourites");
+      gtk_label_set_xalign(GTK_LABEL(rl), 0.0);
+      gtk_box_append(GTK_BOX(row_box), rl);
+      GtkWidget *row = gtk_list_box_row_new();
+      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
+      gtk_widget_set_focusable(row, FALSE);
+      gtk_widget_set_name(row, "Favourites");
+      gtk_widget_set_tooltip_text(row, "Your pinned tools - right-click any tool to add it");
+      gtk_list_box_append(GTK_LIST_BOX(task_list), row);
+      GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_add_css_class(page, "coot-plus-task-page");
+      GtkWidget *title = gtk_label_new("Favourites");
+      gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+      gtk_widget_add_css_class(title, "coot-plus-page-title");
+      gtk_box_append(GTK_BOX(page), title);
+      favourites_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_set_margin_top(favourites_box, 6);
+      gtk_box_append(GTK_BOX(page), favourites_box);
+      GtkWidget *scrolled = gtk_scrolled_window_new();
+      gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+      gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), page);
+      gtk_stack_add_named(GTK_STACK(stack), scrolled, "Favourites");
+   }
 
    for (const auto &task : tasks()) {
 
@@ -1389,7 +1449,10 @@ GtkWidget *make_task_sidebar() {
                        if (row)
                           gtk_stack_set_visible_child_name(GTK_STACK(stack), gtk_widget_get_name(GTK_WIDGET(row)));
                     }), stack);
-   gtk_list_box_select_row(GTK_LIST_BOX(task_list), gtk_list_box_get_row_at_index(GTK_LIST_BOX(task_list), 0));
+   load_favourites();
+   rebuild_favourites();
+   gtk_list_box_select_row(GTK_LIST_BOX(task_list),
+                           gtk_list_box_get_row_at_index(GTK_LIST_BOX(task_list), favourites.empty() ? 1 : 0));
 
    gtk_box_append(GTK_BOX(outer), task_list);
    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -1642,6 +1705,7 @@ void update_misc_section() {
 
 gboolean inspector_tick(gpointer) {
    if (!inspector) return G_SOURCE_REMOVE;
+   ignore_history_scope ignore;
    if (!gtk_widget_get_mapped(inspector)) return G_SOURCE_CONTINUE;
    update_molecules_section();
    update_selection_section();
@@ -1751,6 +1815,7 @@ bool view_restoring = false;
 
 void track_view_changes() {
    if (view_restoring) return;
+   ignore_history_scope ignore;
    view_state_t cur = capture_view_state();
    if (!view_last_valid || !same_molecule_set(cur, view_last)) {
       // files opened or closed: new baseline (and older states may not apply any more)
@@ -2168,6 +2233,530 @@ void update_molecules_section() {
    updating_widgets = false;
 }
 
+
+// ------------------------------------------------------------------------------------
+//          pick-mode banner: "now click an atom" modes get a banner + Esc
+// ------------------------------------------------------------------------------------
+
+struct pick_mode_t { const char *name; std::function<int()> get; const char *text; };
+
+const std::vector<pick_mode_t> &pick_modes() {
+   using g = graphics_info_t;
+   static const std::vector<pick_mode_t> v = {
+      {"range",      [] { return int(g::in_range_define); }, ""}, // text depends on the step (below)
+      {"pepflip",    [] { return int(g::in_pepflip_define); },      "Flip Peptide: click an atom of the peptide"},
+      {"rigid",      [] { return int(g::in_rigid_body_define); },   "Rigid Body Fit: click the first and last atoms of the range"},
+      {"terminal",   [] { return int(g::in_terminal_residue_define); }, "Add Terminal Residue: click an atom of the terminal residue"},
+      {"rottrans",   [] { return int(g::in_rot_trans_object_define); }, "Rotate/Translate: click an atom"},
+      {"resinfo",    [] { return int(g::in_residue_info_define); }, "Residue Info: click an atom"},
+      {"distance",   [] { return int(g::in_distance_define); },     "Distance: click two atoms"},
+      {"angle",      [] { return int(g::in_angle_define); },        "Angle: click three atoms"},
+      {"torsion",    [] { return int(g::in_torsion_define); },      "Torsion: click four atoms"},
+      {"rotamer",    [] { return int(g::in_rotamer_define); },      "Rotamers: click an atom of the residue"},
+      {"mutate",     [] { return int(g::in_mutate_define); },       "Mutate: click an atom of the residue"},
+      {"mutatefit",  [] { return int(g::in_mutate_auto_fit_define); }, "Mutate & Auto-Fit: click an atom of the residue"},
+      {"autofit",    [] { return int(g::in_auto_fit_define); },     "Auto-Fit Rotamer: click an atom of the residue"},
+      {"dbmain",     [] { return int(g::in_db_main_define); },      "DB Main-chain: click the first and last atoms"},
+      {"phipsi",     [] { return int(g::in_edit_phi_psi_define); }, "Edit Phi/Psi: click an atom of the residue"},
+      {"altconf",    [] { return int(g::in_add_alt_conf_define); }, "Add Alt Conf: click an atom of the residue"},
+      {"savesymm",   [] { return int(g::in_save_symmetry_define); }, "Save Symmetry Coordinates: click a symmetry atom"},
+      {"cistrans",   [] { return int(g::in_cis_trans_convert_define); }, "cis ↔ trans: click an atom of the peptide"},
+      {"flip180",    [] { return int(g::in_180_degree_flip_define); }, "Side-chain 180° Flip: click an atom of the residue"},
+      {"reverse",    [] { return int(g::in_reverse_direction_define); }, "Reverse Direction: click an atom of the fragment"},
+      {"dyndist",    [] { return int(g::in_dynamic_distance_define); }, "Dynamic Distance: click two atoms"},
+      {"torsiongen", [] { return int(g::in_torsion_general_define); }, "Torsion: click four atoms"},
+      {"multitors",  [] { return int(g::in_multi_residue_torsion_define); }, "Multi-residue Torsion: click the atoms"},
+      {"editchi",    [] { return int(g::in_edit_chi_angles_define); }, "Edit Chi Angles: click an atom of the residue"},
+      {"user",       [] { return int(g::in_user_defined_define); }, "Click the atoms the script asked for"},
+      {"delatom",    [] { return int(g::delete_item_atom); },       "Delete: click an atom to delete it (Ctrl-click to keep deleting)"},
+      {"delwater",   [] { return int(g::delete_item_water); },      "Delete: click a water to delete it (Ctrl-click to keep deleting)"}};
+   return v;
+}
+
+GtkWidget *mode_banner = nullptr;
+GtkWidget *mode_banner_label = nullptr;
+std::string current_mode;
+
+std::string active_pick_mode_text() {
+   for (const auto &m : pick_modes()) {
+      int v = m.get();
+      if (!v) continue;
+      current_mode = m.name;
+      if (std::string(m.name) == "range")
+         return v == 1 ? "Pick Residue Range: click the first atom of the range"
+                       : "Pick Residue Range: now click the last atom";
+      return m.text;
+   }
+   current_mode.clear();
+   return "";
+}
+
+void cancel_pick_modes() {
+   graphics_info_t g;
+   g.clear_pending_picks();
+   graphics_info_t::delete_item_atom = 0;
+   graphics_info_t::delete_item_water = 0;
+   if (GtkWidget *rp = widget_from_builder("select_residue_range_toggle_button"))
+      if (GTK_IS_TOGGLE_BUTTON(rp)) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(rp), FALSE);
+   graphics_info_t::add_status_bar_text("Cancelled");
+   if (mode_banner) gtk_widget_set_visible(mode_banner, FALSE);
+}
+
+gboolean mode_banner_tick(gpointer) {
+   if (!mode_banner) return G_SOURCE_REMOVE;
+   ignore_history_scope ignore;
+   std::string t = active_pick_mode_text();
+   bool show = !t.empty();
+   if (show) gtk_label_set_text(GTK_LABEL(mode_banner_label), t.c_str());
+   if (gtk_widget_get_visible(mode_banner) != show) gtk_widget_set_visible(mode_banner, show);
+   return G_SOURCE_CONTINUE;
+}
+
+GtkWidget *make_mode_banner() {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+   gtk_widget_add_css_class(box, "coot-plus-mode-banner");
+   gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+   gtk_widget_set_valign(box, GTK_ALIGN_START);
+   gtk_widget_set_margin_top(box, 12);
+   GtkWidget *dot = gtk_label_new("●");
+   gtk_widget_add_css_class(dot, "coot-plus-mode-dot");
+   mode_banner_label = gtk_label_new("");
+   GtkWidget *cancel = gtk_button_new_with_label("Cancel  (Esc)");
+   gtk_widget_set_focusable(cancel, FALSE);
+   gtk_widget_add_css_class(cancel, "coot-plus-mode-cancel");
+   g_signal_connect(cancel, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { cancel_pick_modes(); }), nullptr);
+   gtk_box_append(GTK_BOX(box), dot);
+   gtk_box_append(GTK_BOX(box), mode_banner_label);
+   gtk_box_append(GTK_BOX(box), cancel);
+   gtk_widget_set_visible(box, FALSE);
+   gtk_widget_set_can_target(dot, FALSE);
+   mode_banner = box;
+   g_timeout_add(150, mode_banner_tick, nullptr);
+   return box;
+}
+
+void add_escape_cancels_pick_modes(GtkWidget *window) {
+   GtkEventController *keys = gtk_event_controller_key_new();
+   gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+   g_signal_connect(keys, "key-pressed", G_CALLBACK(+[] (GtkEventControllerKey *, guint keyval, guint, GdkModifierType,
+                                                          gpointer) -> gboolean {
+                       if (keyval != GDK_KEY_Escape) return FALSE;
+                       if (active_pick_mode_text().empty()) return FALSE; // let Coot have Esc (reject moving atoms)
+                       cancel_pick_modes();
+                       return TRUE;
+                    }), nullptr);
+   gtk_widget_add_controller(window, keys);
+}
+
+// ------------------------------------------------------------------------------------
+//          message strip: errors and warnings visible in the window
+// ------------------------------------------------------------------------------------
+
+GtkWidget *message_strip = nullptr;
+GtkWidget *message_icon = nullptr;
+GtkWidget *message_text = nullptr;
+GtkWidget *message_hint = nullptr;
+guint message_timeout = 0;
+unsigned int logger_seen = 0;
+std::string last_message;
+gint64 ui_ready_time = 0;
+
+void hide_message_strip() {
+   if (message_strip) gtk_revealer_set_reveal_child(GTK_REVEALER(message_strip), FALSE);
+   if (message_timeout) { g_source_remove(message_timeout); message_timeout = 0; }
+}
+
+void show_message(const std::string &kind, const std::string &text, const std::string &hint) {
+   if (!message_strip) return;
+   if (text == last_message && gtk_revealer_get_reveal_child(GTK_REVEALER(message_strip))) return;
+   last_message = text;
+   GtkWidget *bar = gtk_revealer_get_child(GTK_REVEALER(message_strip));
+   for (const char *k : {"error", "warning", "info"})
+      gtk_widget_remove_css_class(bar, (std::string("coot-plus-msg-") + k).c_str());
+   gtk_widget_add_css_class(bar, ("coot-plus-msg-" + kind).c_str());
+   gtk_label_set_text(GTK_LABEL(message_icon), kind == "error" ? "✖" : (kind == "warning" ? "⚠" : "ℹ"));
+   gtk_label_set_text(GTK_LABEL(message_text), text.c_str());
+   gtk_label_set_text(GTK_LABEL(message_hint), hint.c_str());
+   gtk_widget_set_visible(message_hint, !hint.empty());
+   gtk_revealer_set_reveal_child(GTK_REVEALER(message_strip), TRUE);
+   if (message_timeout) g_source_remove(message_timeout);
+   message_timeout = g_timeout_add_seconds(kind == "error" ? 20 : 12, +[] (gpointer) -> gboolean {
+                                              message_timeout = 0; hide_message_strip(); return G_SOURCE_REMOVE; }, nullptr);
+}
+
+// new WARNING/ERROR entries from Coot's logger
+gboolean watch_logger(gpointer) {
+   std::vector<logging::log_item> items = logger.get_log_history_from(logger_seen);
+   logger_seen += items.size();
+   if (g_get_monotonic_time() < ui_ready_time) return G_SOURCE_CONTINUE; // ignore start-up chatter
+   for (const auto &li : items) {
+      if (li.type != log_t::ERROR && li.type != log_t::WARNING) continue;
+      std::string msg = li.message;
+      if (!li.function_name.empty() && msg.empty()) msg = li.function_name.get_name();
+      if (msg.empty()) continue;
+      if (msg.length() > 220) msg = msg.substr(0, 217) + "...";
+      show_message(li.type == log_t::ERROR ? "error" : "warning", msg, "Full details: Log (header)");
+   }
+   return G_SOURCE_CONTINUE;
+}
+
+GtkWidget *make_message_strip() {
+   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+   gtk_widget_add_css_class(bar, "coot-plus-message");
+   message_icon = gtk_label_new("");
+   gtk_widget_add_css_class(message_icon, "coot-plus-msg-icon");
+   GtkWidget *texts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_widget_set_hexpand(texts, TRUE);
+   message_text = gtk_label_new("");
+   message_hint = gtk_label_new("");
+   for (GtkWidget *l : {message_text, message_hint}) {
+      gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+      gtk_label_set_selectable(GTK_LABEL(l), TRUE);
+      gtk_box_append(GTK_BOX(texts), l);
+   }
+   gtk_widget_add_css_class(message_hint, "coot-plus-dim");
+   GtkWidget *close = gtk_button_new_with_label("✕");
+   gtk_widget_add_css_class(close, "flat");
+   gtk_widget_set_focusable(close, FALSE);
+   gtk_widget_set_valign(close, GTK_ALIGN_CENTER);
+   g_signal_connect(close, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { hide_message_strip(); }), nullptr);
+   gtk_box_append(GTK_BOX(bar), message_icon);
+   gtk_box_append(GTK_BOX(bar), texts);
+   gtk_box_append(GTK_BOX(bar), close);
+   GtkWidget *rev = gtk_revealer_new();
+   gtk_revealer_set_transition_type(GTK_REVEALER(rev), GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP);
+   gtk_revealer_set_child(GTK_REVEALER(rev), bar);
+   gtk_revealer_set_reveal_child(GTK_REVEALER(rev), FALSE);
+   message_strip = rev;
+   logger_seen = logger.get_log_history_from(0).size();
+   ui_ready_time = g_get_monotonic_time() + 4 * G_USEC_PER_SEC;
+   g_timeout_add(500, watch_logger, nullptr);
+   return rev;
+}
+
+// ------------------------------------------------------------------------------------
+//          command log: every action as a replayable Python line
+// ------------------------------------------------------------------------------------
+
+std::vector<std::string> command_log;
+size_t history_seen = 0;
+GtkWidget *command_log_window = nullptr;
+GtkTextBuffer *command_log_buffer = nullptr;
+
+void append_to_command_log_view(const std::string &line) {
+   if (!command_log_buffer) return;
+   GtkTextIter end;
+   gtk_text_buffer_get_end_iter(command_log_buffer, &end);
+   gtk_text_buffer_insert(command_log_buffer, &end, (line + "\n").c_str(), -1);
+}
+
+void log_line(const std::string &line) {
+   if (!command_log.empty() && command_log.back() == line) return;
+   command_log.push_back(line);
+   append_to_command_log_view(line);
+}
+
+// commands Coot records in its history (these are what "Save State"/history scripts replay)
+bool is_query_command(const std::string &name) {
+   // read-only functions: not worth replaying
+   static const std::vector<std::string> prefixes = {"get-", "get_", "is-", "is_", "mol-is-", "mol_is_", "map-is-", "map_is_",
+                                                       "molecule-name", "molecule_name", "graphics-molecule-bond-type",
+                                                       "graphics_molecule_bond_type", "graphics-n-molecules",
+                                                       "graphics_n_molecules", "imol-refinement-map", "imol_refinement_map",
+                                                       "scroll-wheel-map", "scroll_wheel_map", "valid-", "valid_"};
+   for (const auto &p : prefixes) if (name.rfind(p, 0) == 0) return true;
+   return false;
+}
+
+gboolean watch_history(gpointer) {
+   const auto &h = graphics_info_t::history_list.history_strings;
+   for (; history_seen < h.size(); history_seen++) {
+      bool ignored = false;
+      for (const auto &r : history_ignored) if (history_seen >= r.first && history_seen < r.second) ignored = true;
+      if (ignored || h[history_seen].empty()) continue;
+      const std::string &name = (h[history_seen][0] == "coot" && h[history_seen].size() > 1) ? h[history_seen][1] : h[history_seen][0];
+      if (is_query_command(name)) continue;
+      std::string py = languagize_command(h[history_seen]);
+      if (py.empty()) continue;
+      if (py.rfind("coot.", 0) != 0 && py.find('(') != std::string::npos && py.find('.') > py.find('('))
+         py = "coot." + py;
+      log_line(py);
+   }
+   // forget ranges that are fully behind us
+   history_ignored.erase(std::remove_if(history_ignored.begin(), history_ignored.end(),
+                                        [] (const std::pair<size_t, size_t> &r) { return r.second <= history_seen; }),
+                         history_ignored.end());
+   return G_SOURCE_CONTINUE;
+}
+
+void save_command_log_as(GtkWindow *parent) {
+   GtkFileDialog *fd = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(fd, "Save Command Log as a Python Script");
+   gtk_file_dialog_set_initial_name(fd, "coot-commands.py");
+   gtk_file_dialog_save(fd, parent, nullptr, +[] (GObject *src, GAsyncResult *res, gpointer) {
+                           GFile *f = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, nullptr);
+                           if (!f) return;
+                           std::string text = "# Coot+ command log - run with Calculate > Run Script...\nimport coot\n\n";
+                           for (const auto &l : command_log) text += l + "\n";
+                           g_file_replace_contents(f, text.c_str(), text.size(), nullptr, FALSE, G_FILE_CREATE_NONE,
+                                                   nullptr, nullptr, nullptr);
+                           char *path = g_file_get_path(f);
+                           graphics_info_t::add_status_bar_text(std::string("Command log saved to ") + (path ? path : "file"));
+                           g_free(path);
+                           g_object_unref(f);
+                        }, nullptr);
+   g_object_unref(fd);
+}
+
+void show_command_log() {
+   if (!command_log_window) {
+      GtkWidget *w = gtk_window_new();
+      gtk_window_set_title(GTK_WINDOW(w), "Coot+ Command Log");
+      gtk_window_set_default_size(GTK_WINDOW(w), 640, 420);
+      gtk_window_set_hide_on_close(GTK_WINDOW(w), TRUE);
+      if (GtkWidget *mw = graphics_info_t::get_main_window()) gtk_window_set_transient_for(GTK_WINDOW(w), GTK_WINDOW(mw));
+      GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+      gtk_widget_set_margin_start(box, 10); gtk_widget_set_margin_end(box, 10);
+      gtk_widget_set_margin_top(box, 10);   gtk_widget_set_margin_bottom(box, 10);
+      GtkWidget *intro = gtk_label_new("What you did, as Python. Lines starting with # are menu or toolbar actions "
+                                       "that Coot doesn't record as a command. Copy lines into the Python console, "
+                                       "or save them all as a script.");
+      gtk_label_set_wrap(GTK_LABEL(intro), TRUE);
+      gtk_label_set_xalign(GTK_LABEL(intro), 0.0);
+      gtk_widget_add_css_class(intro, "coot-plus-dim");
+      GtkWidget *tv = gtk_text_view_new();
+      gtk_text_view_set_monospace(GTK_TEXT_VIEW(tv), TRUE);
+      gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
+      gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tv), 6);
+      command_log_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+      for (const auto &l : command_log) append_to_command_log_view(l);
+      GtkWidget *sw = gtk_scrolled_window_new();
+      gtk_widget_set_vexpand(sw, TRUE);
+      gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), tv);
+      GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      GtkWidget *copy = gtk_button_new_with_label("Copy All");
+      GtkWidget *save = gtk_button_new_with_label("Save as Script…");
+      GtkWidget *clear = gtk_button_new_with_label("Clear");
+      g_signal_connect(copy, "clicked", G_CALLBACK(+[] (GtkButton *b, gpointer) {
+                          std::string text;
+                          for (const auto &l : command_log) text += l + "\n";
+                          gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(b)), text.c_str());
+                          graphics_info_t::add_status_bar_text("Command log copied");
+                       }), nullptr);
+      g_signal_connect(save, "clicked", G_CALLBACK(+[] (GtkButton *b, gpointer) {
+                          save_command_log_as(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(b)))); }), nullptr);
+      g_signal_connect(clear, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) {
+                          command_log.clear();
+                          if (command_log_buffer) gtk_text_buffer_set_text(command_log_buffer, "", -1); }), nullptr);
+      gtk_box_append(GTK_BOX(buttons), copy);
+      gtk_box_append(GTK_BOX(buttons), save);
+      gtk_box_append(GTK_BOX(buttons), clear);
+      gtk_box_append(GTK_BOX(box), intro);
+      gtk_box_append(GTK_BOX(box), sw);
+      gtk_box_append(GTK_BOX(box), buttons);
+      gtk_window_set_child(GTK_WINDOW(w), box);
+      command_log_window = w;
+   }
+   gtk_window_present(GTK_WINDOW(command_log_window));
+}
+
+// ------------------------------------------------------------------------------------
+//          favourites: right-click a tool to pin it
+// ------------------------------------------------------------------------------------
+
+
+std::string command_key(const command_t &c) { return c.label + "|" + c.path + "|" + c.action + "|" + c.target; }
+
+void save_favourites() {
+   std::string fn = coot_plus_settings_file();
+   GKeyFile *kf = g_key_file_new();
+   g_key_file_load_from_file(kf, fn.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
+   std::vector<const char *> v;
+   for (const auto &f : favourites) v.push_back(f.c_str());
+   g_key_file_set_string_list(kf, "interface", "favourites", v.data(), v.size());
+   gchar *dir = g_path_get_dirname(fn.c_str());
+   g_mkdir_with_parents(dir, 0755);
+   g_free(dir);
+   g_key_file_save_to_file(kf, fn.c_str(), nullptr);
+   g_key_file_free(kf);
+}
+
+void load_favourites() {
+   favourites.clear();
+   GKeyFile *kf = g_key_file_new();
+   if (g_key_file_load_from_file(kf, coot_plus_settings_file().c_str(), G_KEY_FILE_NONE, nullptr)) {
+      gsize n = 0;
+      gchar **l = g_key_file_get_string_list(kf, "interface", "favourites", &n, nullptr);
+      for (gsize i=0; l && i<n; i++) favourites.push_back(l[i]);
+      g_strfreev(l);
+   }
+   g_key_file_free(kf);
+}
+
+
+void rebuild_favourites() {
+   if (!favourites_box) return;
+   GtkWidget *child;
+   while ((child = gtk_widget_get_first_child(favourites_box)) != nullptr)
+      gtk_box_remove(GTK_BOX(favourites_box), child);
+   int n = 0;
+   for (const auto &key : favourites)
+      for (const auto &c : commands)
+         if (command_key(c) == key) { gtk_box_append(GTK_BOX(favourites_box), make_tool_button(c, "", true)); n++; break; }
+   if (n == 0) {
+      GtkWidget *l = gtk_label_new("Right-click any tool and choose “Add to Favourites” to pin it here.");
+      gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+      gtk_label_set_max_width_chars(GTK_LABEL(l), 24);
+      gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+      gtk_widget_add_css_class(l, "coot-plus-page-hint");
+      gtk_box_append(GTK_BOX(favourites_box), l);
+   }
+}
+
+void toggle_favourite(const command_t &c) {
+   std::string key = command_key(c);
+   auto it = std::find(favourites.begin(), favourites.end(), key);
+   if (it == favourites.end()) {
+      favourites.push_back(key);
+      graphics_info_t::add_status_bar_text("Added " + c.label + " to Favourites");
+   } else {
+      favourites.erase(it);
+      graphics_info_t::add_status_bar_text("Removed " + c.label + " from Favourites");
+   }
+   save_favourites();
+   // rebuilding destroys the button that was right-clicked - do it after this event
+   g_idle_add(+[] (gpointer) -> gboolean { rebuild_favourites(); return G_SOURCE_REMOVE; }, nullptr);
+}
+
+void attach_favourite_menu(GtkWidget *button, const command_t &c) {
+   GtkGesture *rc = gtk_gesture_click_new();
+   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rc), GDK_BUTTON_SECONDARY);
+   command_t *copy = new command_t(c);
+   g_object_set_data_full(G_OBJECT(rc), "cmd", copy, +[] (gpointer d) { delete static_cast<command_t *>(d); });
+   g_signal_connect(rc, "pressed", G_CALLBACK(+[] (GtkGestureClick *g, int, double, double, gpointer) {
+                       command_t *c = static_cast<command_t *>(g_object_get_data(G_OBJECT(g), "cmd"));
+                       GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
+                       bool fav = std::find(favourites.begin(), favourites.end(), command_key(*c)) != favourites.end();
+                       GtkWidget *pop = gtk_popover_new();
+                       GtkWidget *b = gtk_button_new_with_label(fav ? "★  Remove from Favourites" : "☆  Add to Favourites");
+                       gtk_widget_add_css_class(b, "flat");
+                       g_object_set_data(G_OBJECT(b), "cmd", c);
+                       g_object_set_data(G_OBJECT(b), "pop", pop);
+                       g_signal_connect(b, "clicked", G_CALLBACK(+[] (GtkButton *btn, gpointer) {
+                                           command_t *c = static_cast<command_t *>(g_object_get_data(G_OBJECT(btn), "cmd"));
+                                           GtkWidget *p = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "pop"));
+                                           command_t copy = *c;
+                                           gtk_popover_popdown(GTK_POPOVER(p));
+                                           toggle_favourite(copy);
+                                        }), nullptr);
+                       gtk_popover_set_child(GTK_POPOVER(pop), b);
+                       gtk_widget_set_parent(pop, w);
+                       g_signal_connect(pop, "closed", G_CALLBACK(+[] (GtkPopover *p, gpointer) {
+                                           g_idle_add(+[] (gpointer p) -> gboolean { gtk_widget_unparent(GTK_WIDGET(p));
+                                                                                    return G_SOURCE_REMOVE; }, p); }), nullptr);
+                       gtk_popover_popup(GTK_POPOVER(pop));
+                    }), nullptr);
+   gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(rc));
+}
+
+// ------------------------------------------------------------------------------------
+//          Preferences: a Coot+ page (label size, mouse and trackpad)
+// ------------------------------------------------------------------------------------
+
+GtkWidget *pref_row(const char *title, const char *tip, GtkWidget *control) {
+   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+   GtkWidget *l = gtk_label_new(title);
+   gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   gtk_widget_set_hexpand(l, TRUE);
+   gtk_widget_set_tooltip_text(row, tip);
+   gtk_box_append(GTK_BOX(row), l);
+   gtk_box_append(GTK_BOX(row), control);
+   return row;
+}
+
+GtkWidget *pref_choice(const std::vector<std::string> &labels, int active, void (*on_change)(int)) {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   gtk_widget_add_css_class(box, "linked");
+   GtkWidget *first = nullptr;
+   for (unsigned int i=0; i<labels.size(); i++) {
+      GtkWidget *b = gtk_toggle_button_new_with_label(labels[i].c_str());
+      if (first) gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(b), GTK_TOGGLE_BUTTON(first)); else first = b;
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), int(i) == active);
+      g_object_set_data(G_OBJECT(b), "idx", GINT_TO_POINTER(i));
+      g_object_set_data(G_OBJECT(b), "fn", reinterpret_cast<gpointer>(on_change));
+      g_signal_connect(b, "toggled", G_CALLBACK(+[] (GtkToggleButton *t, gpointer) {
+                          if (!gtk_toggle_button_get_active(t)) return;
+                          auto fn = reinterpret_cast<void (*)(int)>(g_object_get_data(G_OBJECT(t), "fn"));
+                          fn(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(t), "idx")));
+                       }), nullptr);
+      gtk_box_append(GTK_BOX(box), b);
+   }
+   return box;
+}
+
+void add_preferences_page() {
+   GtkWidget *nb = widget_from_preferences_builder("preferences_notebook");
+   if (!nb || !GTK_IS_NOTEBOOK(nb)) return;
+   GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+   gtk_widget_set_margin_start(page, 16); gtk_widget_set_margin_end(page, 16);
+   gtk_widget_set_margin_top(page, 16);   gtk_widget_set_margin_bottom(page, 16);
+   gtk_box_append(GTK_BOX(page), section_label("Atom labels"));
+   gtk_box_append(GTK_BOX(page),
+      pref_row("Label size", "Size of the atom labels in the 3D view (also A−/A+ in the inspector)",
+               pref_choice({"Small", "Medium", "Large", "Larger", "Largest"}, std::max(0, get_font_size() - 1),
+                           [] (int i) { set_font_size(i + 1);
+                                        preferences_internal_change_value_int(PREFERENCES_FONT_SIZE, i + 1);
+                                        graphics_draw(); })));
+   gtk_box_append(GTK_BOX(page), section_label("Mouse and trackpad"));
+   gtk_box_append(GTK_BOX(page),
+      pref_row("Mouse scroll wheel", "Hold Shift while scrolling to do the other one",
+               pref_choice({"Zoom", "Map contour"}, get_scroll_wheel_zooms() ? 0 : 1,
+                           [] (int i) { set_scroll_mode(i == 0); })));
+   gtk_box_append(GTK_BOX(page),
+      pref_row("Trackpad two-finger drag", "Rotate: two fingers turn the molecule (pinch zooms, Shift + two fingers changes the contour).\n"
+                                           "Scroll: two fingers act like the mouse scroll wheel.",
+               pref_choice({"Rotate", "Scroll"}, get_trackpad_drag_rotates() ? 0 : 1,
+                           [] (int i) { set_trackpad_drag_rotates(i == 0);
+                                        save_coot_plus_setting_bool("trackpad-drag-rotates", i == 0); })));
+   gtk_box_append(GTK_BOX(page),
+      pref_row("Double-click an atom", "Option-click always centres on an atom",
+               pref_choice({"Centre on it", "Label it"}, get_double_click_centres() ? 0 : 1,
+                           [] (int i) { set_double_click_centres(i == 0);
+                                        save_coot_plus_setting_bool("double-click-centres", i == 0); })));
+   gtk_box_append(GTK_BOX(page), section_label("Panels"));
+   gtk_box_append(GTK_BOX(page),
+      pref_row("Classic build toolbar", "Coot's original column of build buttons on the right",
+               pref_choice({"Hidden", "Shown"}, classic_toolbar && gtk_widget_get_visible(classic_toolbar) ? 1 : 0,
+                           [] (int i) { set_classic_toolbar_visible(i == 1); })));
+   gtk_notebook_append_page(GTK_NOTEBOOK(nb), page, gtk_label_new("Coot+"));
+}
+
+// ------------------------------------------------------------------------------------
+//          header "more" menu
+// ------------------------------------------------------------------------------------
+
+GtkWidget *make_more_menu() {
+   GtkWidget *mb = gtk_menu_button_new();
+   gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(mb), "coot-plus-more-symbolic");
+   gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(mb), FALSE);
+   gtk_widget_set_focusable(mb, FALSE);
+   gtk_widget_set_valign(mb, GTK_ALIGN_CENTER);
+   gtk_widget_set_tooltip_text(mb, "More: command log, preferences, keyboard shortcuts");
+   GtkWidget *pop = gtk_popover_new();
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   add_menu_entry(box, pop, "Command Log…", "Everything you did, as Python you can copy or save as a script",
+                  [] (int) { show_command_log(); }, 0);
+   add_menu_entry(box, pop, "Preferences…", "Coot preferences - the Coot+ page has label size and mouse/trackpad settings",
+                  [] (int) { g_action_group_activate_action(G_ACTION_GROUP(coot_plus_app), "show_preferences_action", nullptr); }, 0);
+   add_menu_entry(box, pop, "Keyboard Shortcuts…", nullptr,
+                  [] (int) { g_action_group_activate_action(G_ACTION_GROUP(coot_plus_app), "coot_shortcuts_action", nullptr); }, 0);
+   add_menu_entry(box, pop, "Search Commands…  (⌘K)", nullptr, [] (int) { coot_plus_show_command_search(); }, 0);
+   gtk_popover_set_child(GTK_POPOVER(pop), box);
+   gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb), pop);
+   return mb;
+}
+
 GtkWidget *make_card(GtkWidget *parent, const std::string &title) {
    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
    gtk_widget_add_css_class(card, "coot-plus-card");
@@ -2424,6 +3013,16 @@ void load_coot_plus_css() {
       ".coot-plus-help-text { font-size: 0.85em; opacity: 0.8; }\n"
       ".coot-plus-expander { margin: 10px 4px 0 4px; }\n"
       ".coot-plus-expander > title { padding: 4px 4px; font-weight: 600; opacity: 0.85; }\n"
+      ".coot-plus-mode-banner { background-color: alpha(#1f2328, 0.92); color: #ffffff; border-radius: 10px;"
+      "  padding: 6px 8px 6px 14px; box-shadow: 0 2px 10px alpha(black, 0.4); font-weight: 600; }\n"
+      ".coot-plus-mode-dot { color: #4cc38a; }\n"
+      ".coot-plus-mode-cancel { padding: 2px 10px; border-radius: 7px; font-weight: 400; }\n"
+      ".coot-plus-message { padding: 6px 12px; border-top: 1px solid alpha(currentColor, 0.12); }\n"
+      ".coot-plus-msg-error   { background-color: alpha(#e5534b, 0.22); }\n"
+      ".coot-plus-msg-warning { background-color: alpha(#f0b429, 0.20); }\n"
+      ".coot-plus-msg-info    { background-color: alpha(@theme_selected_bg_color, 0.20); }\n"
+      ".coot-plus-msg-icon { font-size: 1.1em; }\n"
+      ".coot-plus-star { color: #f0b429; }\n"
       // search results
       ".coot-plus-results row { border-radius: 6px; }\n";
    GtkCssProvider *provider = gtk_css_provider_new();
@@ -2475,6 +3074,14 @@ const std::map<std::string, std::string> &descriptions() {
 } // namespace
 
 
+void coot_plus_message(const std::string &kind, const std::string &text, const std::string &hint) {
+   show_message(kind, text, hint);
+}
+
+void coot_plus_log_command(const std::string &line) {
+   log_line(line);
+}
+
 void coot_plus_show_command_search() {
    if (!search_entry) return;
    gtk_widget_grab_focus(search_entry);
@@ -2502,6 +3109,16 @@ void coot_plus_setup_ui(GtkApplication *application) {
    }
 
    apply_toolbar_tooltips();
+   graphics_info_t::trackpad_drag_rotates = load_coot_plus_setting_bool("trackpad-drag-rotates", true);
+   graphics_info_t::double_click_centres  = load_coot_plus_setting_bool("double-click-centres", true);
+   if (GTK_IS_OVERLAY(graphics)) gtk_overlay_add_overlay(GTK_OVERLAY(graphics), make_mode_banner());
+   if (GtkWidget *vbox = widget_from_builder("main_window_vbox")) {
+      GtkWidget *statusbar = widget_from_builder("main_window_statusbar");
+      GtkWidget *strip = make_message_strip();
+      if (statusbar) gtk_box_insert_child_after(GTK_BOX(vbox), strip, gtk_widget_get_prev_sibling(statusbar));
+      else gtk_box_append(GTK_BOX(vbox), strip);
+   }
+   add_preferences_page();
 #ifndef HAVE_VTE
    // without VTE (this macOS build) the AI-terminal button does nothing - hide it
    if (GtkWidget *ai = widget_from_builder("claude_ai_button")) gtk_widget_set_visible(ai, FALSE);
@@ -2605,11 +3222,15 @@ void coot_plus_setup_ui(GtkApplication *application) {
    gtk_box_insert_child_after(GTK_BOX(toolbar_outer), toolbar_left, center);
    g_object_unref(toolbar_left);
    gtk_box_insert_child_after(GTK_BOX(toolbar_outer), right, toolbar_left);
+   gtk_box_append(GTK_BOX(toolbar_outer), make_more_menu());
    GtkWidget *insp_toggle = make_panel_toggle("coot-plus-inspector-symbolic", "Show/hide the inspector", insp, "show-inspector");
    gtk_box_append(GTK_BOX(toolbar_outer), insp_toggle);
 
    GtkWidget *window = graphics_info_t::get_main_window();
-   if (window) add_command_search_shortcut(window);
+   if (window) {
+      add_command_search_shortcut(window);
+      add_escape_cancels_pick_modes(window);
+   }
 
    // the menu item: About > Search Commands...
    GSimpleAction *a = g_simple_action_new("command_search_action", NULL);
@@ -2617,4 +3238,8 @@ void coot_plus_setup_ui(GtkApplication *application) {
                                                  coot_plus_show_command_search();
                                               }), nullptr);
    g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(a));
+
+   // the command log starts now (what Coot+ itself queried while setting up is not the user's)
+   history_seen = graphics_info_t::history_list.history_strings.size();
+   g_timeout_add(500, watch_history, nullptr);
 }

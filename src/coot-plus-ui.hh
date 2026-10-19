@@ -21,4 +21,12 @@ void coot_plus_setup_ui(GtkApplication *application);
 // show and focus the command search entry
 void coot_plus_show_command_search();
 
+// show a message in the message strip above the status bar
+// kind: "error", "warning" or "info"; hint: optional second line (what to do)
+#include <string>
+void coot_plus_message(const std::string &kind, const std::string &text, const std::string &hint = "");
+
+// record a line (Python, or a "# comment") in the command log
+void coot_plus_log_command(const std::string &line);
+
 #endif // COOT_PLUS_UI_HH
