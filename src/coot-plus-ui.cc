@@ -39,6 +39,7 @@
 #include "cc-interface.hh"
 #include "widget-from-builder.hh"
 #include "coot-plus-ui.hh"
+#include "coot-plus-ruler.hh"
 #include "coot-utils/json.hpp"
 #include "session-info.hh"
 #include "read-molecule.hh"
@@ -164,6 +165,8 @@ void set_accent(const std::string &hex);
 struct common_menu_t { std::string task; std::string key; std::string entry; std::vector<std::string> cur; bool in = false; GtkWidget *pop = nullptr; };
 
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
+void set_ruler(bool on); // Coot+ ruler on/off (keeps the header button in step)
+void show_message(const std::string &kind, const std::string &text, const std::string &hint);
 void set_priorities();
 
 std::string to_lower(const std::string &s) {
@@ -1002,6 +1005,10 @@ void add_coot_plus_commands() {
        [] () { set_scroll_mode(!get_scroll_wheel_zooms()); });
    add("Undo View", "Header", "undo display view dots overlaps surface ribbons colours contour symmetry labels revert",
        [] () { undo_view_change(); });
+   add("Ruler (show/hide)", "Header", "ruler measure distance length size blob tape scale angstrom",
+       [] () { set_ruler(!coot_plus_ruler_is_on()); });
+   add("Ruler: Put Back in the Middle", "Header", "ruler reset centre middle measure",
+       [] () { set_ruler(true); coot_plus_ruler_reset(); });
    add("Clear Drawn Objects (dots, overlaps, markers)", "Validate", "clear remove dots overlaps contact spheres markers generic objects colours",
        [] () { clear_drawn_objects(); });
    add("Python Console", "Header", "python console terminal shell scripting command line repl code",
@@ -1949,6 +1956,20 @@ void update_misc_section() {
    updating_widgets = false;
 }
 
+GtkWidget *ruler_button = nullptr;
+bool ruler_hint_shown = false;
+
+void set_ruler(bool on) {
+   coot_plus_ruler_set_on(on);
+   if (ruler_button && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ruler_button)) != on)
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ruler_button), on);
+   if (on && !ruler_hint_shown) {
+      ruler_hint_shown = true;
+      show_message("info", "Ruler: drag an end (or the middle) to move it",
+                   "Click somewhere to move the nearer end there - onto an atom or the density. Esc hides it.");
+   }
+}
+
 gboolean inspector_tick(gpointer) {
    if (!inspector) return G_SOURCE_REMOVE;
    ignore_history_scope ignore;
@@ -1960,6 +1981,8 @@ gboolean inspector_tick(gpointer) {
    update_maps_section();
    update_misc_section();
    sync_scroll_buttons();
+   if (ruler_button && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ruler_button)) != coot_plus_ruler_is_on())
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ruler_button), coot_plus_ruler_is_on());
    return G_SOURCE_CONTINUE;
 }
 
@@ -2765,7 +2788,11 @@ void add_escape_cancels_pick_modes(GtkWidget *window) {
    g_signal_connect(keys, "key-pressed", G_CALLBACK(+[] (GtkEventControllerKey *, guint keyval, guint, GdkModifierType,
                                                           gpointer) -> gboolean {
                        if (keyval != GDK_KEY_Escape) return FALSE;
-                       if (active_pick_mode_text().empty()) return FALSE; // let Coot have Esc (reject moving atoms)
+                       if (active_pick_mode_text().empty()) {
+                          // no pick mode: Esc hides the ruler, unless atoms are being refined (Esc rejects those)
+                          if (coot_plus_ruler_is_on() && !graphics_info_t::moving_atoms_displayed_p()) { set_ruler(false); return TRUE; }
+                          return FALSE; // let Coot have Esc (reject moving atoms)
+                       }
                        cancel_pick_modes();
                        return TRUE;
                     }), nullptr);
@@ -4452,8 +4479,11 @@ GtkWidget *make_stepping_row() {
    gtk_box_append(GTK_BOX(row), prev);
    gtk_box_append(GTK_BOX(row), next);
    seq_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   gtk_widget_set_margin_bottom(seq_strip_box, 12); // room for the scrollbar under the letters, never over them
    seq_strip_scroll = gtk_scrolled_window_new();
    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(seq_strip_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+   // the scrollbar goes below the letters, not over them (an overlay scrollbar hid most of each letter)
+   gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(seq_strip_scroll), FALSE);
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(seq_strip_scroll), seq_strip_box);
    gtk_widget_add_css_class(seq_strip_scroll, "coot-plus-seq-strip");
    gtk_widget_set_tooltip_text(seq_strip_scroll, "The sequence of this chain - click a residue to go there");
@@ -6099,6 +6129,25 @@ void coot_plus_setup_ui(GtkApplication *application) {
                                       "It never changes the model (that's Undo Edit, to the left).");
       g_signal_connect(uv, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { undo_view_change(); }), nullptr);
       gtk_box_append(GTK_BOX(right), uv);
+   }
+   {
+      ruler_button = gtk_toggle_button_new();
+      GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+      gtk_box_append(GTK_BOX(content), gtk_image_new_from_icon_name("coot-plus-tool-ruler-symbolic"));
+      gtk_box_append(GTK_BOX(content), gtk_label_new("Ruler"));
+      gtk_button_set_child(GTK_BUTTON(ruler_button), content);
+      gtk_widget_add_css_class(ruler_button, "flat");
+      gtk_widget_add_css_class(ruler_button, "coot-plus-icon-button");
+      gtk_widget_set_focusable(ruler_button, FALSE);
+      gtk_widget_set_valign(ruler_button, GTK_ALIGN_CENTER);
+      gtk_widget_set_tooltip_text(ruler_button, "Ruler: a measuring line you can put anywhere - it never touches the model.\n"
+                                                "Drag an end (or the middle) to move it. Click somewhere to move the nearer end "
+                                                "there - onto an atom or the density under the pointer.\nEsc or this button hides it.");
+      g_signal_connect(ruler_button, "toggled", G_CALLBACK(+[] (GtkToggleButton *t, gpointer) {
+                          bool on = gtk_toggle_button_get_active(t);
+                          if (on == coot_plus_ruler_is_on()) return;
+                          set_ruler(on); }), nullptr);
+      gtk_box_append(GTK_BOX(right), ruler_button);
    }
    {
       GtkWidget *dm = gtk_button_new();
