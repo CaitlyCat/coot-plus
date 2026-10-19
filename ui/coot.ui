@@ -191,10 +191,6 @@
           <attribute name="action">app.renumber_waters_action</attribute>
         </item>
         <item>
-          <attribute name="label">Residue Info</attribute>
-          <attribute name="action">app.residue_info_action</attribute>
-        </item>
-        <item>
           <attribute name="label">Restraints...</attribute>
           <attribute name="action">app.edit_restraints_action</attribute>
         </item>
@@ -536,10 +532,6 @@
         <item>
           <attribute name="label">Rigid-Body Fit Molecule</attribute>
           <attribute name="action">app.rigid_body_fit_molecule_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Superpose Ligand</attribute>
-          <attribute name="action">app.superpose_ligands_action</attribute>
         </item>
         <item>
           <attribute name="label">Split Water</attribute>
