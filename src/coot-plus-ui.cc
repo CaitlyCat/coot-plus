@@ -70,6 +70,8 @@ bool updating_widgets = false; // guard: don't act on our own set_active()/set_v
 GtkWidget *classic_toolbar = nullptr; // Coot's original vertical build toolbar
 void set_classic_toolbar_visible(bool state);
 
+void update_molecules_section(); // inspector Molecules card
+
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_priorities();
 
@@ -1491,11 +1493,334 @@ void update_misc_section() {
 gboolean inspector_tick(gpointer) {
    if (!inspector) return G_SOURCE_REMOVE;
    if (!gtk_widget_get_mapped(inspector)) return G_SOURCE_CONTINUE;
+   update_molecules_section();
    update_selection_section();
    update_maps_section();
    update_misc_section();
    sync_scroll_buttons();
    return G_SOURCE_CONTINUE;
+}
+
+// ------------------------------------------------------------------------------------
+//                     Molecules: every open model and map, with show/close
+// ------------------------------------------------------------------------------------
+
+GtkWidget *molecules_box = nullptr;
+std::string molecules_signature;
+struct molecule_row_t { int imol; GtkWidget *shown; };
+std::vector<molecule_row_t> molecule_rows;
+
+std::vector<float> model_cell(int imol) {
+   std::pair<std::vector<float>, std::string> cs = graphics_info_t::molecules[imol].get_cell_and_symm();
+   return cs.first;
+}
+
+std::string model_spacegroup(int imol) {
+   return graphics_info_t::molecules[imol].get_cell_and_symm().second;
+}
+
+std::vector<float> map_cell(int imol) {
+   std::vector<float> v;
+   const molecule_class_info_t &m = graphics_info_t::molecules[imol];
+   if (!m.has_xmap()) return v;
+   const clipper::Cell &c = m.xmap.cell();
+   v = {float(c.a()), float(c.b()), float(c.c()),
+        float(clipper::Util::rad2d(c.alpha())), float(clipper::Util::rad2d(c.beta())),
+        float(clipper::Util::rad2d(c.gamma()))};
+   return v;
+}
+
+bool cells_match(const std::vector<float> &a, const std::vector<float> &b) {
+   if (a.size() < 6 || b.size() < 6) return true; // can't tell
+   for (int i=0; i<3; i++)
+      if (std::abs(a[i] - b[i]) > 0.02 * std::max(a[i], b[i])) return false; // 2% on lengths
+   for (int i=3; i<6; i++)
+      if (std::abs(a[i] - b[i]) > 1.5) return false; // 1.5 degrees
+   return true;
+}
+
+void close_molecule_confirmed(int imol); // below
+void close_everything_confirmed();
+
+void ask_then(const std::string &question, const std::string &detail, const char *ok_label,
+              void (*on_ok)(int), int imol) {
+   GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", question.c_str());
+   gtk_alert_dialog_set_detail(dialog, detail.c_str());
+   const char *buttons[] = {"Cancel", ok_label, nullptr};
+   gtk_alert_dialog_set_buttons(dialog, buttons);
+   gtk_alert_dialog_set_cancel_button(dialog, 0);
+   gtk_alert_dialog_set_default_button(dialog, 1);
+   struct ctx_t { void (*f)(int); int imol; };
+   ctx_t *ctx = new ctx_t{on_ok, imol};
+   GtkWidget *w = graphics_info_t::get_main_window();
+   gtk_alert_dialog_choose(dialog, w ? GTK_WINDOW(w) : nullptr, nullptr,
+                           +[] (GObject *src, GAsyncResult *res, gpointer data) {
+                              ctx_t *c = static_cast<ctx_t *>(data);
+                              int r = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
+                              if (r == 1) c->f(c->imol);
+                              delete c;
+                           }, ctx);
+   g_object_unref(dialog);
+}
+
+void close_molecule_confirmed(int imol) {
+   std::string name = file_basename(molecule_name(imol));
+   close_molecule(imol);
+   graphics_info_t::add_status_bar_text("Closed " + name);
+   graphics_draw();
+}
+
+void close_everything_confirmed() {
+   for (int imol=0; imol<graphics_n_molecules(); imol++)
+      if (is_valid_model_molecule(imol) || is_valid_map_molecule(imol))
+         close_molecule(imol);
+   graphics_info_t::add_status_bar_text("Closed all models and maps");
+   graphics_draw();
+}
+
+void ask_close_molecule(int imol) {
+   std::string name = file_basename(molecule_name(imol));
+   bool model = is_valid_model_molecule(imol);
+   std::string detail = "This removes it from Coot. The file on disk is not changed.";
+   if (model && graphics_info_t::molecules[imol].Have_unsaved_changes_p())
+      detail = "This model has changes that have not been saved - they will be lost.\n"
+               "(Save it first with Save > Save Coordinates.)";
+   ask_then(std::string("Close ") + (model ? "model " : "map ") + name + "?", detail, "Close",
+            [] (int i) { close_molecule_confirmed(i); }, imol);
+}
+
+void ask_close_everything() {
+   bool unsaved = false;
+   for (int imol=0; imol<graphics_n_molecules(); imol++)
+      if (is_valid_model_molecule(imol) && graphics_info_t::molecules[imol].Have_unsaved_changes_p()) unsaved = true;
+   ask_then("Close all models and maps?",
+            unsaved ? "Some models have unsaved changes - they will be lost."
+                    : "Files on disk are not changed.", "Close All",
+            [] (int) { close_everything_confirmed(); }, -1);
+}
+
+// a flat button in a row menu; runs f(imol) and closes the popover
+void add_menu_entry(GtkWidget *box, GtkWidget *popover, const char *label, const char *tooltip,
+                    void (*f)(int), int imol) {
+   GtkWidget *b = gtk_button_new_with_label(label);
+   gtk_widget_add_css_class(b, "flat");
+   gtk_widget_add_css_class(b, "coot-plus-menu-entry");
+   gtk_widget_set_focusable(b, FALSE);
+   if (tooltip) gtk_widget_set_tooltip_text(b, tooltip);
+   GtkWidget *l = gtk_button_get_child(GTK_BUTTON(b));
+   if (GTK_IS_LABEL(l)) gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   g_object_set_data(G_OBJECT(b), "imol", GINT_TO_POINTER(imol));
+   g_object_set_data(G_OBJECT(b), "popover", popover);
+   g_object_set_data(G_OBJECT(b), "func", reinterpret_cast<gpointer>(f));
+   g_signal_connect(b, "clicked", G_CALLBACK(+[] (GtkButton *btn, gpointer) {
+                       auto fn = reinterpret_cast<void (*)(int)>(g_object_get_data(G_OBJECT(btn), "func"));
+                       int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "imol"));
+                       gtk_popover_popdown(GTK_POPOVER(g_object_get_data(G_OBJECT(btn), "popover")));
+                       fn(i);
+                       give_focus_back_to_graphics();
+                    }), nullptr);
+   gtk_box_append(GTK_BOX(box), b);
+}
+
+void open_display_manager() {
+   GtkWidget *w = widget_from_builder("toolbar_display_manager_button");
+   if (w) g_signal_emit_by_name(w, "clicked");
+}
+
+GtkWidget *make_molecule_menu(int imol, bool model) {
+   GtkWidget *mb = gtk_menu_button_new();
+   gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(mb), "coot-plus-more-symbolic");
+   gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(mb), FALSE);
+   gtk_menu_button_set_always_show_arrow(GTK_MENU_BUTTON(mb), FALSE);
+   gtk_widget_set_focusable(mb, FALSE);
+   gtk_widget_set_tooltip_text(mb, "More for this one");
+   GtkWidget *pop = gtk_popover_new();
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   if (model) {
+      add_menu_entry(box, pop, "Centre on this model", nullptr, [] (int i) {
+            set_rotation_centre(molecule_centre_internal(i, 0), molecule_centre_internal(i, 1),
+                                molecule_centre_internal(i, 2)); }, imol);
+      add_menu_entry(box, pop, "Show only this model", "Hide all the other models", [] (int i) {
+            set_display_only_model_mol(i); }, imol);
+      add_menu_entry(box, pop, mol_is_active(imol) ? "Make not clickable" : "Make clickable",
+                     "Clickable (active) models are the ones picking and model-building tools work on", [] (int i) {
+            set_mol_active(i, !mol_is_active(i)); molecules_signature.clear(); }, imol);
+      add_menu_entry(box, pop, graphics_info_t::molecules[imol].show_symmetry ? "Symmetry off for this model"
+                                                                           : "Symmetry on for this model",
+                     "Show or hide the crystal neighbours of this model only", [] (int i) {
+            bool on = !graphics_info_t::molecules[i].show_symmetry;
+            set_show_symmetry_molecule(i, on);
+            if (on) set_show_symmetry_master(1);
+            molecules_signature.clear(); graphics_draw(); }, imol);
+   } else {
+      add_menu_entry(box, pop, "Use this map for refinement", "Real-space refinement and fitting will use this map",
+                     [] (int i) { set_imol_refinement_map(i);
+                        graphics_info_t::add_status_bar_text("Refinement map: " + file_basename(molecule_name(i))); }, imol);
+      add_menu_entry(box, pop, "Scroll wheel contours this map", nullptr, [] (int i) {
+            set_scrollable_map(i);
+            graphics_info_t::add_status_bar_text("Scroll wheel map: " + file_basename(molecule_name(i))); }, imol);
+   }
+   gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+   add_menu_entry(box, pop, "Open the full Display Manager", "Every display option for every molecule (F8)",
+                  [] (int) { open_display_manager(); }, imol);
+   add_menu_entry(box, pop, "Close…", nullptr, [] (int i) { ask_close_molecule(i); }, imol);
+   gtk_popover_set_child(GTK_POPOVER(pop), box);
+   gtk_menu_button_set_popover(GTK_MENU_BUTTON(mb), pop);
+   return mb;
+}
+
+void rebuild_molecules_section() {
+
+   GtkWidget *child;
+   while ((child = gtk_widget_get_first_child(molecules_box)) != nullptr)
+      gtk_box_remove(GTK_BOX(molecules_box), child);
+   molecule_rows.clear();
+
+   // the model maps are compared with: the first displayed model with a cell
+   int ref_model = -1;
+   for (int imol=0; imol<graphics_n_molecules(); imol++)
+      if (is_valid_model_molecule(imol) && mol_is_displayed(imol) && model_cell(imol).size() >= 6) { ref_model = imol; break; }
+   std::vector<float> ref_cell = ref_model >= 0 ? model_cell(ref_model) : std::vector<float>();
+
+   int n = 0;
+   for (int imol=0; imol<graphics_n_molecules(); imol++) {
+      bool model = is_valid_model_molecule(imol);
+      bool map   = is_valid_map_molecule(imol);
+      if (!model && !map) continue;
+      n++;
+
+      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_widget_add_css_class(row, "coot-plus-molecule-row");
+
+      GtkWidget *shown = gtk_check_button_new();
+      gtk_widget_set_focusable(shown, FALSE);
+      gtk_widget_set_valign(shown, GTK_ALIGN_START);
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(shown), model ? mol_is_displayed(imol) : map_is_displayed(imol));
+      gtk_widget_set_tooltip_text(shown, "Show / hide");
+      g_signal_connect(shown, "toggled", G_CALLBACK(+[] (GtkCheckButton *b, gpointer d) {
+                          if (updating_widgets) return;
+                          int i = GPOINTER_TO_INT(d);
+                          if (is_valid_model_molecule(i)) set_mol_displayed(i, gtk_check_button_get_active(b));
+                          else set_map_displayed(i, gtk_check_button_get_active(b));
+                          molecules_signature.clear(); // the cell check depends on what is shown
+                       }), GINT_TO_POINTER(imol));
+      molecule_rows.push_back(molecule_row_t{imol, shown});
+
+      GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_set_hexpand(text, TRUE);
+      std::string name = file_basename(molecule_name(imol));
+      GtkWidget *name_label = gtk_label_new(name.c_str());
+      gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+      gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_MIDDLE);
+      gtk_label_set_max_width_chars(GTK_LABEL(name_label), 22);
+      gtk_widget_add_css_class(name_label, "coot-plus-map-name");
+      gtk_widget_set_tooltip_text(name_label, molecule_name(imol));
+      gtk_box_append(GTK_BOX(text), name_label);
+
+      std::string info;
+      std::string warning;
+      if (model) {
+         info = "Model #" + std::to_string(imol);
+         std::string sg = model_spacegroup(imol);
+         if (!sg.empty()) info += " · " + sg;
+         info += " · " + std::to_string(graphics_info_t::molecules[imol].atom_sel.n_selected_atoms) + " atoms";
+         if (!mol_is_active(imol)) info += " · not clickable";
+         if (ref_model >= 0 && imol != ref_model && !cells_match(model_cell(imol), ref_cell))
+            warning = "Different unit cell from " + file_basename(molecule_name(ref_model));
+      } else {
+         info = std::string(map_is_difference_map(imol) ? "Difference map" : "Map") + " #" + std::to_string(imol);
+         if (imol == imol_refinement_map()) info += " · refinement map";
+         if (ref_model >= 0 && !cells_match(map_cell(imol), ref_cell))
+            warning = "Unit cell differs from " + file_basename(molecule_name(ref_model)) +
+                      " - probably a different crystal";
+      }
+      GtkWidget *info_label = gtk_label_new(info.c_str());
+      gtk_label_set_xalign(GTK_LABEL(info_label), 0.0);
+      gtk_label_set_ellipsize(GTK_LABEL(info_label), PANGO_ELLIPSIZE_END);
+      gtk_label_set_max_width_chars(GTK_LABEL(info_label), 26);
+      gtk_widget_add_css_class(info_label, "coot-plus-dim");
+      gtk_box_append(GTK_BOX(text), info_label);
+      if (!warning.empty()) {
+         GtkWidget *w = gtk_label_new(("⚠ " + warning).c_str());
+         gtk_label_set_xalign(GTK_LABEL(w), 0.0);
+         gtk_label_set_wrap(GTK_LABEL(w), TRUE);
+         gtk_label_set_max_width_chars(GTK_LABEL(w), 26);
+         gtk_widget_add_css_class(w, "coot-plus-warning");
+         gtk_widget_set_tooltip_text(w, "The unit cells don't match, so this map was most likely made from a different "
+                                        "data set or crystal than the model. Close it with ✕ if it's not wanted.");
+         gtk_box_append(GTK_BOX(text), w);
+      }
+
+      GtkWidget *close = gtk_button_new_with_label("✕");
+      gtk_widget_add_css_class(close, "flat");
+      gtk_widget_add_css_class(close, "coot-plus-close");
+      gtk_widget_set_focusable(close, FALSE);
+      gtk_widget_set_valign(close, GTK_ALIGN_START);
+      gtk_widget_set_tooltip_text(close, model ? "Close this model (asks first)" : "Close this map (asks first)");
+      g_signal_connect(close, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                          ask_close_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
+
+      GtkWidget *menu = make_molecule_menu(imol, model);
+      gtk_widget_set_valign(menu, GTK_ALIGN_START);
+
+      gtk_box_append(GTK_BOX(row), shown);
+      gtk_box_append(GTK_BOX(row), text);
+      gtk_box_append(GTK_BOX(row), menu);
+      gtk_box_append(GTK_BOX(row), close);
+      gtk_box_append(GTK_BOX(molecules_box), row);
+   }
+
+   if (n == 0) {
+      GtkWidget *l = gtk_label_new("Nothing open yet.\nLoad › Open Coordinates, or Auto Open MTZ for maps.");
+      gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+      gtk_widget_add_css_class(l, "coot-plus-dim");
+      gtk_box_append(GTK_BOX(molecules_box), l);
+   } else {
+      GtkWidget *bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      GtkWidget *dm = gtk_button_new_with_label("Display Manager…");
+      GtkWidget *all = gtk_button_new_with_label("Close all…");
+      for (GtkWidget *b : {dm, all}) {
+         gtk_widget_add_css_class(b, "flat");
+         gtk_widget_add_css_class(b, "coot-plus-link");
+         gtk_widget_set_focusable(b, FALSE);
+      }
+      gtk_widget_set_hexpand(dm, TRUE);
+      gtk_widget_set_halign(dm, GTK_ALIGN_START);
+      gtk_widget_set_tooltip_text(dm, "Every display option for every molecule: drawing style, colours, symmetry (F8)");
+      gtk_widget_set_tooltip_text(all, "Close every model and map (asks first) - to start again");
+      g_signal_connect(dm,  "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { open_display_manager(); }), nullptr);
+      g_signal_connect(all, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { ask_close_everything(); }), nullptr);
+      gtk_box_append(GTK_BOX(bottom), dm);
+      gtk_box_append(GTK_BOX(bottom), all);
+      gtk_box_append(GTK_BOX(molecules_box), bottom);
+   }
+}
+
+void update_molecules_section() {
+   std::string sig;
+   for (int imol=0; imol<graphics_n_molecules(); imol++) {
+      bool model = is_valid_model_molecule(imol), map = is_valid_map_molecule(imol);
+      if (!model && !map) continue;
+      sig += std::to_string(imol) + ":" + molecule_name(imol) + ":" + (model ? "m" : "x") +
+             std::to_string(model ? mol_is_displayed(imol) : 0) + std::to_string(model ? mol_is_active(imol) : 0) +
+             (model ? std::to_string(graphics_info_t::molecules[imol].atom_sel.n_selected_atoms) : "") + ";";
+   }
+   sig += "r" + std::to_string(imol_refinement_map());
+   if (sig != molecules_signature) {
+      molecules_signature = sig;
+      updating_widgets = true;
+      rebuild_molecules_section();
+      updating_widgets = false;
+      return;
+   }
+   updating_widgets = true;
+   for (const auto &r : molecule_rows) {
+      bool d = is_valid_model_molecule(r.imol) ? mol_is_displayed(r.imol) : map_is_displayed(r.imol);
+      if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r.shown)) != d)
+         gtk_check_button_set_active(GTK_CHECK_BUTTON(r.shown), d);
+   }
+   updating_widgets = false;
 }
 
 GtkWidget *make_card(GtkWidget *parent, const std::string &title) {
@@ -1517,8 +1842,13 @@ GtkWidget *make_inspector() {
    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
    gtk_widget_add_css_class(box, "coot-plus-inspector");
 
+   // --- Molecules
+   GtkWidget *card = make_card(box, "Molecules");
+   molecules_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+   gtk_box_append(GTK_BOX(card), molecules_box);
+
    // --- Selected
-   GtkWidget *card = make_card(box, "Selected");
+   card = make_card(box, "Selected");
    sel_title_label = gtk_label_new("Nothing selected");
    gtk_label_set_xalign(GTK_LABEL(sel_title_label), 0.0);
    gtk_widget_add_css_class(sel_title_label, "coot-plus-selected-title");
@@ -1629,6 +1959,7 @@ GtkWidget *make_inspector() {
 
    inspector = scrolled;
    rebuild_maps_section();
+   update_molecules_section();
    g_timeout_add(400, inspector_tick, nullptr);
    return scrolled;
 }
@@ -1733,6 +2064,14 @@ void load_coot_plus_css() {
       ".coot-plus-pill { border-radius: 7px; padding: 3px 6px; }\n"
       ".coot-plus-map-name { font-weight: 600; }\n"
       ".coot-plus-readout { font-size: 0.85em; opacity: 0.7; font-feature-settings: \"tnum\"; }\n"
+      ".coot-plus-molecule-row { padding: 3px 0; }\n"
+      ".coot-plus-warning { color: #f0b429; font-size: 0.85em; }\n"
+      ".coot-plus-close { min-width: 24px; min-height: 24px; padding: 0 6px; opacity: 0.8; border-radius: 6px; font-size: 1.05em; }\n"
+      ".coot-plus-molecule-row menubutton > button { min-width: 24px; min-height: 24px; padding: 0 4px; }\n"
+      ".coot-plus-close:hover { opacity: 1; background-color: alpha(#e5534b, 0.25); }\n"
+      ".coot-plus-menu-entry { padding: 5px 12px; }\n"
+      ".coot-plus-dm-button { padding: 3px 10px; border-radius: 7px; font-weight: 600;"
+      "  background-color: alpha(@theme_selected_bg_color, 0.85); color: @theme_selected_fg_color; margin-right: 6px; }\n"
       // search results
       ".coot-plus-results row { border-radius: 6px; }\n";
    GtkCssProvider *provider = gtk_css_provider_new();
@@ -1859,15 +2198,28 @@ void coot_plus_setup_ui(GtkApplication *application) {
    gtk_box_append(GTK_BOX(right), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
    struct hb { const char *icon; const char *tip; const char *toolbar_id; };
    for (const hb &h : {hb{"coot-plus-undo-symbolic", "Undo the last change to the model (Ctrl-Z)", "undo_button"},
-                       hb{"coot-plus-redo-symbolic", "Redo (Ctrl-Y)", "redo_button"},
-                       hb{"coot-plus-molecules-symbolic", "Display Manager: show/hide molecules and maps, change how they are drawn",
-                          "toolbar_display_manager_button"}}) {
+                       hb{"coot-plus-redo-symbolic", "Redo (Ctrl-Y)", "redo_button"}}) {
       GtkWidget *b = icon_button(h.icon, h.tip);
       g_signal_connect(b, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer id) {
                           GtkWidget *w = widget_from_builder(static_cast<const char *>(id));
                           if (w) g_signal_emit_by_name(w, "clicked");
                        }), const_cast<char *>(h.toolbar_id));
       gtk_box_append(GTK_BOX(right), b);
+   }
+   {
+      GtkWidget *dm = gtk_button_new();
+      GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      GtkWidget *img = gtk_image_new_from_icon_name("coot-plus-molecules-symbolic");
+      gtk_box_append(GTK_BOX(content), img);
+      gtk_box_append(GTK_BOX(content), gtk_label_new("Display Manager"));
+      gtk_button_set_child(GTK_BUTTON(dm), content);
+      gtk_widget_add_css_class(dm, "coot-plus-dm-button");
+      gtk_widget_set_focusable(dm, FALSE);
+      gtk_widget_set_valign(dm, GTK_ALIGN_CENTER);
+      gtk_widget_set_tooltip_text(dm, "Display Manager: show/hide, restyle and close molecules and maps (F8).\n"
+                                      "The quick list is at the top of the inspector.");
+      g_signal_connect(dm, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) { open_display_manager(); }), nullptr);
+      gtk_box_prepend(GTK_BOX(right), dm);
    }
    for (GtkWidget *w = gtk_widget_get_first_child(right); w; w = gtk_widget_get_next_sibling(w))
       if (GTK_IS_SEPARATOR(w)) gtk_widget_add_css_class(w, "coot-plus-header-sep");
