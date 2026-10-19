@@ -1635,7 +1635,7 @@ def coot_mkdir(dir_name):
 
 
 def view_matrix():
-    return [get_view_matrix_element(row_number, column_number) for row_number in range(3) for column_number in range(3)]
+    return [coot.get_view_matrix_element(row_number, column_number) for row_number in range(3) for column_number in range(3)]
 
 # return the transposed view matrix (useful for molscript, perhaps).
 # BL says: like all matrices is a python list [...]
@@ -1643,7 +1643,7 @@ def view_matrix():
 
 
 def view_matrix_transp():
-    return [get_view_matrix_element(column_number, row_number) for row_number in range(3) for column_number in range(3)]
+    return [coot.get_view_matrix_element(column_number, row_number) for row_number in range(3) for column_number in range(3)]
 
 # return the view quaternion
 #
