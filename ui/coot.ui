@@ -228,11 +228,6 @@
           <attribute name="api-function">renumber_waters</attribute>
         </item>
         <item>
-          <attribute name="label">Residue Info</attribute>
-          <attribute name="action">app.residue_info_action</attribute>
-          <attribute name="api-function">residue_info_dialog</attribute>
-        </item>
-        <item>
           <attribute name="label">Restraints...</attribute>
           <attribute name="action">app.edit_restraints_action</attribute>
           <attribute name="api-function">show_restraints_editor</attribute>
@@ -627,11 +622,6 @@
           <attribute name="label">Rigid-Body Fit Molecule</attribute>
           <attribute name="action">app.rigid_body_fit_molecule_action</attribute>
           <attribute name="api-function">rigid_body_refine_by_atom_selection</attribute>
-        </item>
-        <item>
-          <attribute name="label">Superpose Ligand</attribute>
-          <attribute name="action">app.superpose_ligands_action</attribute>
-          <attribute name="api-function">coot_utils.overlay_my_ligands</attribute>
         </item>
         <item>
           <attribute name="label">Split Water</attribute>
