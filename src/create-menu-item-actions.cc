@@ -1472,31 +1472,86 @@ scripting_python_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    reveal_python_scripting_entry();
 }
 
+// Coot+: Edit > Settings items (previously menu items with no action).
+// (Calculate > Scripting > Scheme was removed - this build has no Guile - and
+// Calculate > Use ClustalW... only printed a message; Align and Mutate does the job.)
+
 void
-scripting_scheme_action(G_GNUC_UNUSED GSimpleAction *simple_action,
-                        G_GNUC_UNUSED GVariant *parameter,
-                        G_GNUC_UNUSED gpointer user_data) {
+rotate_translate_zone_mode_action(GSimpleAction *simple_action,
+                                  GVariant *parameter,
+                                  G_GNUC_UNUSED gpointer user_data) {
 
-   std::cout << "launch the scheme dialog here" << std::endl;
-
+   // parameter is "zone-centre" or "second-atom" (radio items in the menu)
+   std::string mode = g_variant_get_string(parameter, NULL);
+   set_rotate_translate_zone_rotates_about_zone_centre(mode == "zone-centre" ? 1 : 0);
+   g_simple_action_set_state(simple_action, parameter);
 }
 
 void
-use_clustalw_for_alignment_then_mutate_action(G_GNUC_UNUSED GSimpleAction *simple_action,
-                                              G_GNUC_UNUSED GVariant *parameter,
-                                              G_GNUC_UNUSED gpointer user_data) {
+set_spin_speed_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                      G_GNUC_UNUSED GVariant *parameter,
+                      G_GNUC_UNUSED gpointer user_data) {
 
-   std::cout << "launch a python gui for clustalw" << std::endl;
-
-   // generic_chooser_entry_and_file_selector("Align Sequence to Model: ",
-   //                                         coot_utils.valid_model_molecule_qm,
-   //                                         "Chain ID",
-   //                                         "",
-   //                                         "Select PIR Alignment file",
-   //                                         lambda imol, chain_id, target_sequence_pif_file:
-   //                                         coot.run_clustalw_alignment(imol, chain_id, target_sequence_pif_file)))
-
+   std::string current = std::to_string(idle_function_rotate_angle());
+   std::string cmd = "import coot_gui\n"
+      "coot_gui.generic_single_entry('Spin speed (degrees per frame):', '" + current + "', ' Set ', "
+      "lambda txt: coot.set_idle_function_rotate_angle(float(txt)))";
+   safe_python_command(cmd);
 }
+
+void
+nudge_centre_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                    G_GNUC_UNUSED GVariant *parameter,
+                    G_GNUC_UNUSED gpointer user_data) {
+
+   safe_python_command("import coot_gui\ncoot_gui.nudge_screen_centre_gui()");
+}
+
+void
+all_molecules_near_chains_symmetry_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                                          G_GNUC_UNUSED GVariant *parameter,
+                                          G_GNUC_UNUSED gpointer user_data) {
+
+   graphics_info_t g;
+   int n_set = 0;
+   for (int imol=0; imol<g.n_molecules(); imol++) {
+      if (g.is_valid_model_molecule(imol)) {
+         set_symmetry_whole_chain(imol, 1);
+         n_set++;
+      }
+   }
+   std::string m = "Symmetry shows whole (near) chains for " + std::to_string(n_set) + " molecule";
+   if (n_set != 1) m += "s";
+   g.add_status_bar_text(m);
+}
+
+static guint quick_save_checkpoint_timeout_id = 0;
+
+void
+quick_save_checkpointing_action(GSimpleAction *simple_action,
+                                G_GNUC_UNUSED GVariant *parameter,
+                                G_GNUC_UNUSED gpointer user_data) {
+
+   // a check item: toggle the state
+   GVariant *state = g_action_get_state(G_ACTION(simple_action));
+   bool new_state = !g_variant_get_boolean(state);
+   g_variant_unref(state);
+   g_simple_action_set_state(simple_action, g_variant_new_boolean(new_state));
+
+   if (new_state) {
+      if (quick_save_checkpoint_timeout_id == 0) {
+         auto cb = +[] (gpointer data) -> gboolean { quick_save(); return G_SOURCE_CONTINUE; };
+         quick_save_checkpoint_timeout_id = g_timeout_add_seconds(300, cb, nullptr);
+      }
+      add_status_bar_text("Quick-save checkpointing on: modified molecules are saved every 5 minutes");
+   } else {
+      if (quick_save_checkpoint_timeout_id != 0)
+         g_source_remove(quick_save_checkpoint_timeout_id);
+      quick_save_checkpoint_timeout_id = 0;
+      add_status_bar_text("Quick-save checkpointing off");
+   }
+}
+
 
 std::vector<int>
 get_map_molecule_vector() {
@@ -6758,12 +6813,25 @@ create_actions(GtkApplication *application) {
    add_action("calculate_updating_maps_action", calculate_updating_maps_action);
    add_action(  "sharpen_blur_for_xray_action",   sharpen_blur_for_xray_action);
    add_action(       "scripting_python_action",        scripting_python_action);
-   add_action(       "scripting_scheme_action",        scripting_scheme_action);
    add_action("ligand_builder_residue_to_2d_action", ligand_builder_residue_to_2d_action);
 
    add_action("calculate_hydrogen_bonds_action", calculate_hydrogen_bonds_action);
    add_action(          "load_tutorial_model_and_data_action",           load_tutorial_model_and_data_action);
-   add_action("use_clustalw_for_alignment_then_mutate_action", use_clustalw_for_alignment_then_mutate_action);
+
+   // Edit -> Settings (Coot+)
+
+   add_stateful_string_action("rotate_translate_zone_mode_action",
+                              graphics_info_t::rot_trans_zone_rotates_about_zone_centre ? "zone-centre" : "second-atom",
+                              rotate_translate_zone_mode_action);
+   add_action(                    "set_spin_speed_action",                    set_spin_speed_action);
+   add_action(                      "nudge_centre_action",                      nudge_centre_action);
+   add_action("all_molecules_near_chains_symmetry_action", all_molecules_near_chains_symmetry_action);
+   {
+      GSimpleAction *simple_action = g_simple_action_new_stateful("quick_save_checkpointing_action", NULL,
+                                                                  g_variant_new_boolean(FALSE));
+      g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(simple_action));
+      g_signal_connect(simple_action, "activate", G_CALLBACK(quick_save_checkpointing_action), NULL);
+   }
 
    // Calculate -> Map Tools
 

@@ -217,30 +217,37 @@
 
             <section>
               <submenu>
-                <attribute name="label">Rotate/Translate Zone Mode...</attribute>
+                <attribute name="label">Rotate/Translate Zone Mode</attribute>
                 <section>
                   <item>
                     <attribute name="label">Rotate about Zone Centre</attribute>
+                    <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
+                    <attribute name="target">zone-centre</attribute>
                   </item>
                   <item>
                     <attribute name="label">Rotate about Second-clicked Atom</attribute>
+                    <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
+                    <attribute name="target">second-atom</attribute>
                   </item>
                 </section>
               </submenu>
               <item>
                 <attribute name="label">Set Spin Speed...</attribute>
+                <attribute name="action">app.set_spin_speed_action</attribute>
               </item>
               <item>
                 <attribute name="label">Nudge Centre...</attribute>
+                <attribute name="action">app.nudge_centre_action</attribute>
               </item>
               <item>
                 <attribute name="label">All Molecules use "Near Chains" Symmetry</attribute>
+                <attribute name="action">app.all_molecules_near_chains_symmetry_action</attribute>
               </item>
+              <!-- Coot+: "Save Graphics Window Size and Position" removed: GTK4 cannot read or set
+                   the window position, and the old code only wrote fixed values -->
               <item>
-                <attribute name="label">Save Graphics Window Size and Position</attribute>
-              </item>
-              <item>
-                <attribute name="label">Enable Quick-Save Checkpointing</attribute>
+                <attribute name="label">Quick-Save Checkpointing (every 5 min)</attribute>
+                <attribute name="action">app.quick_save_checkpointing_action</attribute>
               </item>
             </section>
 
@@ -369,9 +376,6 @@
             <attribute name="label">Python...</attribute>
             <attribute name="action">app.scripting_python_action</attribute>
           </item>
-          <item>
-            <attribute name="label">Scheme</attribute>
-          </item>
         </submenu>
 
         <item>
@@ -385,10 +389,6 @@
         <item>
           <attribute name="label">Updating Maps...</attribute>
           <attribute name="action">app.calculate_updating_maps_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Use ClustalW for Alignment then Mutate</attribute>
-          <attribute name="action">app.use_clustalw_for_alignment_then_mutate_action</attribute>
         </item>
 
       </section>
