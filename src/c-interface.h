@@ -1811,6 +1811,8 @@ int get_coot_plus_ruler();
 float coot_plus_ruler_distance();
 /*! \brief Coot+ ruler: put its ends at these two points */
 void set_coot_plus_ruler_ends(float x1, float y1, float z1, float x2, float y2, float z2);
+/*! \brief Coot+ ruler: one coordinate of an end (end 0 or 1, axis 0, 1, 2 for x, y, z) */
+float coot_plus_ruler_end_coord(int end, int axis);
 /*! \brief save previous colour map for molecule number imol
 
   (used so that the map colour can be restored on Cancel) */

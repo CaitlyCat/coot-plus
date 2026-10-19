@@ -252,6 +252,10 @@ bool coot_plus_ruler_drag_end(double x, double y, bool was_click) {
 void  set_coot_plus_ruler(int state) { coot_plus_ruler_set_on(state != 0); }
 int   get_coot_plus_ruler() { return coot_plus_ruler_is_on() ? 1 : 0; }
 float coot_plus_ruler_distance() { return coot_plus_ruler_length(); }
+float coot_plus_ruler_end_coord(int end, int axis) {
+   const glm::vec3 &e = end == 0 ? end_a : end_b;
+   return (axis >= 0 && axis < 3) ? e[axis] : 0.0f;
+}
 void  set_coot_plus_ruler_ends(float x1, float y1, float z1, float x2, float y2, float z2) {
    coot_plus_ruler_set_ends(x1, y1, z1, x2, y2, z2);
 }
