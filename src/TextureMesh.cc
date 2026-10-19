@@ -62,6 +62,8 @@
 
 #include "coot-utils/tiny_gltf.h"
 
+float TextureMesh::atom_label_size_factor = 1.0f; // Coot+
+
 
 // for the moment make the scales explict, when fixed make the scales default
 void
@@ -438,7 +440,7 @@ TextureMesh::draw_atom_label(const std::string &atom_label,
    if (err) std::cout << "GL ERROR:: draw_atom_label() " << name << " pre-draw " << err << std::endl;
 
    // scale of 20 make letter separation good
-   GLfloat scale = 100.1;
+   GLfloat scale = 100.1 * atom_label_size_factor;
 
    // ------------------------------- text texture code here -----------------------
 
