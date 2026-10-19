@@ -4528,6 +4528,10 @@ graphics_info_t::apply_undo() {
       if (umol == -1) {
          std::string mess = "There are no molecules with modifications that can be undone";
          logger.log(log_t::INFO, mess);
+         // Coot+: say so in the window too - otherwise Undo looks broken
+         if (use_graphics_interface_flag)
+            add_status_bar_text("Nothing to undo - Undo reverses changes to a model. "
+                                "To remove a model or map, use \u2715 in the Molecules list (inspector)");
       } else {
 
          std::string cwd = coot::util::current_working_dir();
