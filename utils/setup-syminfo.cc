@@ -23,6 +23,9 @@
 
 #include <iostream>
 #include <string.h>
+#include <string>
+#include <vector>
+#include <stdlib.h>
 
 #include "coot-utils.hh"
 #include "setup-syminfo.hh"
@@ -35,56 +38,65 @@
 #include <unistd.h>
 #endif
 
-void setup_syminfo() {
+// Coot+: return true if a usable symmetry library was found (and SYMINFO now
+// points at it). Previously this function only printed to the terminal, and a
+// SYMINFO pointing at a missing file (as the CCP4 9 macOS wrapper does) was
+// accepted silently - so symmetry just did nothing.
+bool setup_syminfo() {
 
    // How should the setting up of symmetry work?
    //
-   // First we check the environment variable SYMINFO.
+   // First we check the environment variable SYMINFO (and that the file exists).
    //
-   // If that is not set, then we look in the standard (hardwired at
-   // compile time) place
+   // If that is not set, then we look in the standard place: $prefix/share/coot/data,
+   // where $prefix is found from the compile-time PKGDATADIR or the location of the
+   // executable (see coot::package_data_dir()), then in CCP4's $CLIBD.
    //
-   // If both these fail then give an error message.
+   // If all these fail then give an error message.
+
+   auto file_exists = [] (const std::string &fn) {
+      struct stat buf;
+      return stat(fn.c_str(), &buf) == 0;
+   };
 
    char *syminfo = getenv("SYMINFO");
-   if (!syminfo) {
+   if (syminfo) {
+      if (file_exists(syminfo))
+         return true;
+      std::cout << "WARNING:: SYMINFO is set to " << syminfo
+                << " but that file does not exist - looking elsewhere" << std::endl;
+   }
 
-      std::string symstring("SYMINFO=");
+   std::vector<std::string> candidates;
+   std::string pkgdatadir = coot::package_data_dir();
+   candidates.push_back(pkgdatadir + "/data/syminfo.lib");
+   candidates.push_back(pkgdatadir + "/syminfo.lib");
+   char *clibd = getenv("CLIBD");
+   if (clibd)
+      candidates.push_back(std::string(clibd) + "/syminfo.lib");
+   char *ccp4 = getenv("CCP4");
+   if (ccp4)
+      candidates.push_back(std::string(ccp4) + "/lib/data/syminfo.lib");
 
-      // using PKGDATADIR will work for those who compiler, not the
-      // binary users:
-      std::string standard_file_name = coot::package_data_dir();
-      standard_file_name += "/data/";
-      standard_file_name += "syminfo.lib";
-
-      struct stat buf;
-      int status = stat(standard_file_name.c_str(), &buf);
-      if (status != 0) { // standard-residues file was not found in default location
-
-	 // This warning is only sensible for those who compile (or
-	 // fink).  So let's test if SYMINFO was set before we write it
-	 //
-	 std::cout << "WARNING:: Symmetry library not found at "
-		   << standard_file_name
-		   << " and environment variable SYMINFO is not set." << std::endl;
-	 std::cout << "WARNING:: Symmetry will not be possible\n";
-
-      } else {
-
-	 symstring += standard_file_name;
-
-	 // Mind bogglingly enough, the string is part of the environment
-	 // and malleable, so const char * of a local variable is not
-	 // what we want at all.
-	 //
-	 // We fire and forget, we don't want to change s.
-	 //
-         int ll = symstring.length();
-	 char * s = new char[ll + 1];
-         s[ll] = 0;
-	 strcpy(s, symstring.c_str());
-	 putenv(s);
-	 // std::cout << "DEBUG:: SYMINFO set/not set? s is " << s <<std::endl;
+   for (const auto &fn : candidates) {
+      if (file_exists(fn)) {
+         std::string symstring = "SYMINFO=" + fn;
+         // Mind bogglingly enough, the string is part of the environment
+         // and malleable, so const char * of a local variable is not
+         // what we want at all.
+         //
+         // We fire and forget, we don't want to change s.
+         //
+         char *s = new char[symstring.length() + 1];
+         strcpy(s, symstring.c_str());
+         putenv(s);
+         return true;
       }
    }
+
+   std::cout << "WARNING:: Symmetry library (syminfo.lib) not found at "
+             << candidates[0] << " and environment variable SYMINFO is not set"
+             << (syminfo ? " to an existing file." : ".") << std::endl;
+   std::cout << "WARNING:: Symmetry will not be possible\n";
+   return false;
 }
