@@ -82,6 +82,11 @@ GtkWidget *classic_toolbar = nullptr; // Coot's original vertical build toolbar
 void set_classic_toolbar_visible(bool state);
 
 void update_molecules_section(); // inspector Molecules card
+void ask_rename_molecule(int imol);
+std::string config_path(const std::string &file);
+nlohmann::json read_json_file(const std::string &fn, const nlohmann::json &dflt);
+void write_json_file(const std::string &fn, const nlohmann::json &j);
+std::string display_name(int imol);
 void undo_view_change();
 void clear_drawn_objects();
 void log_line(const std::string &line);
@@ -112,7 +117,7 @@ GtkWidget *make_colour_swatch(int imol, bool model);
 std::vector<command_t> residue_search_results(const std::string &query);
 void save_open_files_as_group(const std::string &name);
 void ask_name(const std::string &title, const std::string &prompt, const std::string &initial,
-              std::function<void(const std::string &)> cb);
+              std::function<void(const std::string &)> cb, bool allow_empty = false);
 void cancel_pick_modes();
 void load_favourites();
 void rebuild_favourites();
@@ -1645,8 +1650,11 @@ void rebuild_maps_section() {
       gtk_widget_set_focusable(shown, FALSE);
       gtk_check_button_set_active(GTK_CHECK_BUTTON(shown), map_is_displayed(imol));
       gtk_widget_set_tooltip_text(shown, "Show/hide this map");
-      std::string name = file_basename(molecule_name(imol));
-      GtkWidget *name_label = gtk_label_new(((diff ? "Δ " : "") + name).c_str());
+      std::string name = display_name(imol);
+      GtkWidget *name_label = gtk_label_new(((diff ? "Δ " : "") + name + "  ·  " +
+                                             file_basename(graphics_info_t::molecules[imol].save_mtz_file_name.empty()
+                                                           ? molecule_name(imol)
+                                                           : graphics_info_t::molecules[imol].save_mtz_file_name)).c_str());
       gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
       gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_MIDDLE);
       gtk_label_set_max_width_chars(GTK_LABEL(name_label), 24);
@@ -1700,7 +1708,7 @@ void update_maps_section() {
    std::string sig;
    for (int imol=0; imol<graphics_n_molecules(); imol++)
       if (is_valid_map_molecule(imol))
-         sig += std::to_string(imol) + ":" + molecule_name(imol) + ":" + std::to_string(map_is_difference_map(imol)) + ";";
+         sig += std::to_string(imol) + ":" + molecule_name(imol) + ":" + std::to_string(map_is_difference_map(imol)) + ":" + display_name(imol) + ";";
    if (sig != maps_signature) {
       maps_signature = sig;
       updating_widgets = true;
@@ -2094,6 +2102,8 @@ GtkWidget *make_molecule_menu(int imol, bool model) {
    gtk_widget_set_tooltip_text(mb, "More for this one");
    GtkWidget *pop = gtk_popover_new();
    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   add_menu_entry(box, pop, "Label…", "Give it your own name in this list (remembered for this file)",
+                  [] (int i) { ask_rename_molecule(i); }, imol);
    if (model) {
       add_menu_entry(box, pop, "Centre on this model", nullptr, [] (int i) {
             set_rotation_centre(molecule_centre_internal(i, 0), molecule_centre_internal(i, 1),
@@ -2135,6 +2145,197 @@ GtkWidget *make_molecule_menu(int imol, bool model) {
    return mb;
 }
 
+// ---- names that say what each molecule is
+
+// what an MTZ map is, from its amplitude column (the usual Refmac/Phenix/Buster names)
+std::string map_kind(int imol) {
+   const molecule_class_info_t &m = graphics_info_t::molecules[imol];
+   bool diff = map_is_difference_map(imol);
+   std::string f = m.save_f_col;
+   std::string fu;
+   for (char c : f) fu += std::toupper(static_cast<unsigned char>(c));
+   if (fu.empty()) return diff ? "Difference map" : "Map";
+   static const std::vector<std::pair<std::string, std::string> > kinds = {
+      {"2FOFCWT", "2mFo-DFc"}, {"FWT", "2mFo-DFc"}, {"2FOFC", "2mFo-DFc"},
+      {"FOFCWT", "mFo-DFc"}, {"DELFWT", "mFo-DFc"}, {"FOFC", "mFo-DFc"},
+      {"FAN", "Anomalous"}, {"ANOM", "Anomalous"}, {"FC", "Fcalc"}};
+   for (const auto &k : kinds)
+      if (fu == k.first || fu.rfind(k.first + "_", 0) == 0 || fu.rfind(k.first + "-", 0) == 0) return k.second;
+   return f; // unknown column name: show it as it is
+}
+
+// a key for remembering a label across sessions (and groups): the file (+ column for MTZ maps)
+std::string source_key(int imol) {
+   std::error_code ec;
+   const molecule_class_info_t &m = graphics_info_t::molecules[imol];
+   if (is_valid_map_molecule(imol) && !m.save_mtz_file_name.empty())
+      return std::filesystem::absolute(m.save_mtz_file_name, ec).lexically_normal().string() + "|" + m.save_f_col;
+   return std::filesystem::absolute(molecule_name(imol), ec).lexically_normal().string();
+}
+
+nlohmann::json labels_cache;
+gint64 labels_cache_time = 0;
+
+std::string custom_label(int imol) {
+   gint64 now = g_get_monotonic_time();
+   if (labels_cache_time == 0 || now - labels_cache_time > 2 * G_USEC_PER_SEC) {
+      labels_cache = read_json_file(config_path("labels.json"), nlohmann::json::object());
+      labels_cache_time = now;
+   }
+   std::string k = source_key(imol);
+   return (labels_cache.contains(k) && labels_cache[k].is_string()) ? labels_cache[k].get<std::string>() : std::string();
+}
+
+void set_custom_label(int imol, const std::string &label) {
+   nlohmann::json j = read_json_file(config_path("labels.json"), nlohmann::json::object());
+   std::string k = source_key(imol);
+   if (label.empty()) j.erase(k); else j[k] = label;
+   write_json_file(config_path("labels.json"), j);
+   labels_cache_time = 0; // re-read next time
+   molecules_signature.clear();
+   maps_signature.clear();
+}
+
+// what the Molecules list and the Maps card call it
+std::string display_name(int imol) {
+   std::string l = custom_label(imol);
+   if (!l.empty()) return l;
+   if (is_valid_map_molecule(imol)) {
+      std::string k = map_kind(imol);
+      return map_is_difference_map(imol) && k == "mFo-DFc" ? "mFo-DFc (difference)" : k;
+   }
+   return file_basename(molecule_name(imol));
+}
+
+void ask_rename_molecule(int imol) {
+   std::string current = display_name(imol);
+   const molecule_class_info_t &m = graphics_info_t::molecules[imol];
+   std::string what = file_basename(m.save_mtz_file_name.empty() ? molecule_name(imol) : m.save_mtz_file_name);
+   if (is_valid_map_molecule(imol) && !m.save_f_col.empty()) what += " (" + m.save_f_col + ")";
+   ask_name(std::string("Label ") + (is_valid_model_molecule(imol) ? "Model" : "Map"),
+            "Label for " + what + "\n(clear it to go back to the automatic name)",
+            current, [imol] (const std::string &n) {
+               set_custom_label(imol, n);
+               graphics_info_t::add_status_bar_text(n.empty() ? "Label removed" : "Label: " + n);
+            }, true);
+}
+
+GtkWidget *molecule_section_heading(const std::string &text) {
+   GtkWidget *l = section_label(text);
+   gtk_widget_set_margin_top(l, 6);
+   return l;
+}
+GtkWidget *make_molecule_row(int imol, int ref_model, const std::vector<float> &ref_cell) {
+   bool model = is_valid_model_molecule(imol);
+   bool diff = !model && map_is_difference_map(imol);
+
+   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_add_css_class(row, "coot-plus-molecule-row");
+
+   GtkWidget *shown = gtk_check_button_new();
+   gtk_widget_set_focusable(shown, FALSE);
+   gtk_widget_set_valign(shown, GTK_ALIGN_START);
+   gtk_check_button_set_active(GTK_CHECK_BUTTON(shown), model ? mol_is_displayed(imol) : map_is_displayed(imol));
+   gtk_widget_set_tooltip_text(shown, "Show / hide");
+   g_signal_connect(shown, "toggled", G_CALLBACK(+[] (GtkCheckButton *b, gpointer d) {
+                       if (updating_widgets) return;
+                       int i = GPOINTER_TO_INT(d);
+                       if (is_valid_model_molecule(i)) set_mol_displayed(i, gtk_check_button_get_active(b));
+                       else set_map_displayed(i, gtk_check_button_get_active(b));
+                       molecules_signature.clear(); // the cell check depends on what is shown
+                    }), GINT_TO_POINTER(imol));
+   molecule_rows.push_back(molecule_row_t{imol, shown});
+
+   // what it is, at a glance: type tag above the colour swatch
+   GtkWidget *type_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+   gtk_widget_set_valign(type_box, GTK_ALIGN_START);
+   GtkWidget *tag = gtk_label_new(model ? "MODEL" : (diff ? "Δ MAP" : "MAP"));
+   gtk_widget_add_css_class(tag, "coot-plus-type-tag");
+   gtk_widget_add_css_class(tag, model ? "coot-plus-type-model" : (diff ? "coot-plus-type-diff" : "coot-plus-type-map"));
+   gtk_box_append(GTK_BOX(type_box), tag);
+   gtk_widget_set_size_request(type_box, 40, -1);
+
+   GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_widget_set_hexpand(text, TRUE);
+   std::string title = display_name(imol);
+   GtkWidget *name_label = gtk_label_new(title.c_str());
+   gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
+   gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_END);
+   gtk_label_set_max_width_chars(GTK_LABEL(name_label), 24);
+   gtk_widget_add_css_class(name_label, "coot-plus-map-name");
+   gtk_box_append(GTK_BOX(text), name_label);
+
+   std::string info, warning;
+   const molecule_class_info_t &m = graphics_info_t::molecules[imol];
+   if (model) {
+      std::string base = file_basename(molecule_name(imol));
+      if (title != base) info = base + " · ";
+      info += "#" + std::to_string(imol);
+      std::string sg = model_spacegroup(imol);
+      if (!sg.empty()) info += " · " + sg;
+      info += " · " + std::to_string(m.atom_sel.n_selected_atoms) + " atoms";
+      if (!mol_is_active(imol)) info += " · not clickable";
+      if (ref_model >= 0 && imol != ref_model && !cells_match(model_cell(imol), ref_cell))
+         warning = "Different unit cell from " + display_name(ref_model);
+   } else {
+      std::string file = file_basename(m.save_mtz_file_name.empty() ? molecule_name(imol) : m.save_mtz_file_name);
+      info = file + " · #" + std::to_string(imol);
+      if (imol == imol_refinement_map()) info += " · refinement map";
+      if (ref_model >= 0 && !cells_match(map_cell(imol), ref_cell))
+         warning = "Unit cell differs from " + display_name(ref_model) + " - probably a different crystal";
+   }
+   GtkWidget *info_label = gtk_label_new(info.c_str());
+   gtk_label_set_xalign(GTK_LABEL(info_label), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(info_label), TRUE);
+   gtk_label_set_wrap_mode(GTK_LABEL(info_label), PANGO_WRAP_WORD_CHAR);
+   gtk_label_set_lines(GTK_LABEL(info_label), 2);
+   gtk_label_set_ellipsize(GTK_LABEL(info_label), PANGO_ELLIPSIZE_END);
+   gtk_label_set_max_width_chars(GTK_LABEL(info_label), 24);
+   gtk_widget_add_css_class(info_label, "coot-plus-dim");
+   gtk_box_append(GTK_BOX(text), info_label);
+   std::string tip = molecule_name(imol);
+   if (!model && !m.save_f_col.empty()) tip = m.save_mtz_file_name + "\ncolumns " + m.save_f_col + " " + m.save_phi_col;
+   tip += "\nDouble-click the name to give it your own label";
+   gtk_widget_set_tooltip_text(text, tip.c_str());
+   if (!warning.empty()) {
+      GtkWidget *w = gtk_label_new(("⚠ " + warning).c_str());
+      gtk_label_set_xalign(GTK_LABEL(w), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(w), TRUE);
+      gtk_label_set_max_width_chars(GTK_LABEL(w), 24);
+      gtk_widget_add_css_class(w, "coot-plus-warning");
+      gtk_widget_set_tooltip_text(w, "The unit cells don't match, so this was most likely made from a different "
+                                     "data set or crystal than the model. Close it with ✕ if it's not wanted.");
+      gtk_box_append(GTK_BOX(text), w);
+   }
+   // double-click the name: label it
+   GtkGesture *dbl = gtk_gesture_click_new();
+   g_signal_connect(dbl, "pressed", G_CALLBACK(+[] (GtkGestureClick *, int n_press, double, double, gpointer d) {
+                       if (n_press == 2) ask_rename_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
+   gtk_widget_add_controller(text, GTK_EVENT_CONTROLLER(dbl));
+
+   GtkWidget *close = gtk_button_new_with_label("✕");
+   gtk_widget_add_css_class(close, "flat");
+   gtk_widget_add_css_class(close, "coot-plus-close");
+   gtk_widget_set_focusable(close, FALSE);
+   gtk_widget_set_valign(close, GTK_ALIGN_START);
+   gtk_widget_set_tooltip_text(close, model ? "Close this model (asks first)" : "Close this map (asks first)");
+   g_signal_connect(close, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
+                       ask_close_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
+
+   GtkWidget *swatch = make_colour_swatch(imol, model);
+   gtk_widget_set_halign(swatch, GTK_ALIGN_CENTER);
+   gtk_box_append(GTK_BOX(type_box), swatch);
+   GtkWidget *menu = make_molecule_menu(imol, model);
+   gtk_widget_set_valign(menu, GTK_ALIGN_START);
+
+   gtk_box_append(GTK_BOX(row), shown);
+   gtk_box_append(GTK_BOX(row), type_box);
+   gtk_box_append(GTK_BOX(row), text);
+   gtk_box_append(GTK_BOX(row), menu);
+   gtk_box_append(GTK_BOX(row), close);
+   return row;
+}
+
 void rebuild_molecules_section() {
 
    GtkWidget *child;
@@ -2148,97 +2349,21 @@ void rebuild_molecules_section() {
       if (is_valid_model_molecule(imol) && mol_is_displayed(imol) && model_cell(imol).size() >= 6) { ref_model = imol; break; }
    std::vector<float> ref_cell = ref_model >= 0 ? model_cell(ref_model) : std::vector<float>();
 
-   int n = 0;
+   std::vector<int> models, maps;
    for (int imol=0; imol<graphics_n_molecules(); imol++) {
-      bool model = is_valid_model_molecule(imol);
-      bool map   = is_valid_map_molecule(imol);
-      if (!model && !map) continue;
-      n++;
-
-      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-      gtk_widget_add_css_class(row, "coot-plus-molecule-row");
-
-      GtkWidget *shown = gtk_check_button_new();
-      gtk_widget_set_focusable(shown, FALSE);
-      gtk_widget_set_valign(shown, GTK_ALIGN_START);
-      gtk_check_button_set_active(GTK_CHECK_BUTTON(shown), model ? mol_is_displayed(imol) : map_is_displayed(imol));
-      gtk_widget_set_tooltip_text(shown, "Show / hide");
-      g_signal_connect(shown, "toggled", G_CALLBACK(+[] (GtkCheckButton *b, gpointer d) {
-                          if (updating_widgets) return;
-                          int i = GPOINTER_TO_INT(d);
-                          if (is_valid_model_molecule(i)) set_mol_displayed(i, gtk_check_button_get_active(b));
-                          else set_map_displayed(i, gtk_check_button_get_active(b));
-                          molecules_signature.clear(); // the cell check depends on what is shown
-                       }), GINT_TO_POINTER(imol));
-      molecule_rows.push_back(molecule_row_t{imol, shown});
-
-      GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-      gtk_widget_set_hexpand(text, TRUE);
-      std::string name = file_basename(molecule_name(imol));
-      GtkWidget *name_label = gtk_label_new(name.c_str());
-      gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
-      gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_MIDDLE);
-      gtk_label_set_max_width_chars(GTK_LABEL(name_label), 22);
-      gtk_widget_add_css_class(name_label, "coot-plus-map-name");
-      gtk_widget_set_tooltip_text(name_label, molecule_name(imol));
-      gtk_box_append(GTK_BOX(text), name_label);
-
-      std::string info;
-      std::string warning;
-      if (model) {
-         info = "Model #" + std::to_string(imol);
-         std::string sg = model_spacegroup(imol);
-         if (!sg.empty()) info += " · " + sg;
-         info += " · " + std::to_string(graphics_info_t::molecules[imol].atom_sel.n_selected_atoms) + " atoms";
-         if (!mol_is_active(imol)) info += " · not clickable";
-         if (ref_model >= 0 && imol != ref_model && !cells_match(model_cell(imol), ref_cell))
-            warning = "Different unit cell from " + file_basename(molecule_name(ref_model));
-      } else {
-         info = std::string(map_is_difference_map(imol) ? "Difference map" : "Map") + " #" + std::to_string(imol);
-         if (imol == imol_refinement_map()) info += " · refinement map";
-         if (ref_model >= 0 && !cells_match(map_cell(imol), ref_cell))
-            warning = "Unit cell differs from " + file_basename(molecule_name(ref_model)) +
-                      " - probably a different crystal";
-      }
-      GtkWidget *info_label = gtk_label_new(info.c_str());
-      gtk_label_set_xalign(GTK_LABEL(info_label), 0.0);
-      gtk_label_set_ellipsize(GTK_LABEL(info_label), PANGO_ELLIPSIZE_END);
-      gtk_label_set_max_width_chars(GTK_LABEL(info_label), 26);
-      gtk_widget_add_css_class(info_label, "coot-plus-dim");
-      gtk_box_append(GTK_BOX(text), info_label);
-      if (!warning.empty()) {
-         GtkWidget *w = gtk_label_new(("⚠ " + warning).c_str());
-         gtk_label_set_xalign(GTK_LABEL(w), 0.0);
-         gtk_label_set_wrap(GTK_LABEL(w), TRUE);
-         gtk_label_set_max_width_chars(GTK_LABEL(w), 26);
-         gtk_widget_add_css_class(w, "coot-plus-warning");
-         gtk_widget_set_tooltip_text(w, "The unit cells don't match, so this map was most likely made from a different "
-                                        "data set or crystal than the model. Close it with ✕ if it's not wanted.");
-         gtk_box_append(GTK_BOX(text), w);
-      }
-
-      GtkWidget *close = gtk_button_new_with_label("✕");
-      gtk_widget_add_css_class(close, "flat");
-      gtk_widget_add_css_class(close, "coot-plus-close");
-      gtk_widget_set_focusable(close, FALSE);
-      gtk_widget_set_valign(close, GTK_ALIGN_START);
-      gtk_widget_set_tooltip_text(close, model ? "Close this model (asks first)" : "Close this map (asks first)");
-      g_signal_connect(close, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer d) {
-                          ask_close_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
-
-      GtkWidget *swatch = make_colour_swatch(imol, model);
-      GtkWidget *menu = make_molecule_menu(imol, model);
-      gtk_widget_set_valign(menu, GTK_ALIGN_START);
-
-      gtk_box_append(GTK_BOX(row), shown);
-      gtk_box_append(GTK_BOX(row), swatch);
-      gtk_box_append(GTK_BOX(row), text);
-      gtk_box_append(GTK_BOX(row), menu);
-      gtk_box_append(GTK_BOX(row), close);
-      gtk_box_append(GTK_BOX(molecules_box), row);
+      if (is_valid_model_molecule(imol)) models.push_back(imol);
+      else if (is_valid_map_molecule(imol)) maps.push_back(imol);
+   }
+   if (!models.empty()) {
+      gtk_box_append(GTK_BOX(molecules_box), molecule_section_heading(models.size() == 1 ? "Model" : "Models"));
+      for (int imol : models) gtk_box_append(GTK_BOX(molecules_box), make_molecule_row(imol, ref_model, ref_cell));
+   }
+   if (!maps.empty()) {
+      gtk_box_append(GTK_BOX(molecules_box), molecule_section_heading(maps.size() == 1 ? "Map" : "Maps"));
+      for (int imol : maps) gtk_box_append(GTK_BOX(molecules_box), make_molecule_row(imol, ref_model, ref_cell));
    }
 
-   if (n == 0) {
+   if (models.empty() && maps.empty()) {
       GtkWidget *l = gtk_label_new("Nothing open yet.\nLoad › Open Coordinates, or Auto Open MTZ for maps.");
       gtk_label_set_xalign(GTK_LABEL(l), 0.0);
       gtk_label_set_wrap(GTK_LABEL(l), TRUE);
@@ -2248,10 +2373,10 @@ void rebuild_molecules_section() {
       GtkWidget *bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
       GtkWidget *dm = gtk_button_new_with_label("Display Manager…");
       GtkWidget *all = gtk_button_new_with_label("Close all…");
-      for (GtkWidget *b : {dm, all}) {
-         gtk_widget_add_css_class(b, "flat");
-         gtk_widget_add_css_class(b, "coot-plus-link");
-         gtk_widget_set_focusable(b, FALSE);
+      for (GtkWidget *bt : {dm, all}) {
+         gtk_widget_add_css_class(bt, "flat");
+         gtk_widget_add_css_class(bt, "coot-plus-link");
+         gtk_widget_set_focusable(bt, FALSE);
       }
       gtk_widget_set_hexpand(dm, TRUE);
       gtk_widget_set_halign(dm, GTK_ALIGN_START);
@@ -2274,6 +2399,8 @@ void update_molecules_section() {
              std::to_string(model ? mol_is_displayed(imol) : 0) + std::to_string(model ? mol_is_active(imol) : 0) +
              (model ? std::to_string(graphics_info_t::molecules[imol].atom_sel.n_selected_atoms) : "") + ";";
    }
+   for (int imol=0; imol<graphics_n_molecules(); imol++)
+      if (is_valid_model_molecule(imol) || is_valid_map_molecule(imol)) sig += display_name(imol) + ";";
    sig += "r" + std::to_string(imol_refinement_map());
    if (sig != molecules_signature) {
       molecules_signature = sig;
@@ -2857,8 +2984,9 @@ void add_menu_heading(GtkWidget *box, const std::string &text) {
 
 // a small window asking for a name; cb is called with the name on Save
 void ask_name(const std::string &title, const std::string &prompt, const std::string &initial,
-              std::function<void(const std::string &)> cb) {
+              std::function<void(const std::string &)> cb, bool allow_empty) {
    GtkWidget *w = gtk_window_new();
+   g_object_set_data(G_OBJECT(w), "allow-empty", GINT_TO_POINTER(allow_empty ? 1 : 0));
    gtk_window_set_title(GTK_WINDOW(w), title.c_str());
    gtk_window_set_modal(GTK_WINDOW(w), TRUE);
    gtk_window_set_resizable(GTK_WINDOW(w), FALSE);
@@ -2890,7 +3018,7 @@ void ask_name(const std::string &title, const std::string &prompt, const std::st
       std::string t = gtk_editable_get_text(GTK_EDITABLE(g_object_get_data(G_OBJECT(w), "entry")));
       while (!t.empty() && t.back() == ' ') t.pop_back();
       while (!t.empty() && t.front() == ' ') t.erase(0, 1);
-      if (t.empty()) return;
+      if (t.empty() && !GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "allow-empty"))) return;
       auto *f = static_cast<std::function<void(const std::string &)> *>(g_object_get_data(G_OBJECT(w), "cb"));
       std::function<void(const std::string &)> copy = *f;
       gtk_window_destroy(GTK_WINDOW(w));
@@ -3938,7 +4066,7 @@ GtkWidget *make_inspector() {
    GtkWidget *scrolled = gtk_scrolled_window_new();
    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), box);
-   gtk_widget_set_size_request(scrolled, 270, -1);
+   gtk_widget_set_size_request(scrolled, 300, -1);
    gtk_widget_add_css_class(scrolled, "coot-plus-inspector-scroll");
 
    inspector = scrolled;
@@ -4073,12 +4201,16 @@ void load_coot_plus_css() {
       ".coot-plus-msg-info    { background-color: alpha(@theme_selected_bg_color, 0.20); }\n"
       ".coot-plus-msg-icon { font-size: 1.1em; }\n"
       ".coot-plus-star { color: #f0b429; }\n"
-      ".coot-plus-swatch { min-width: 18px; min-height: 18px; padding: 1px; }\n"
-      ".coot-plus-swatch > button { min-width: 16px; min-height: 16px; padding: 2px; border-radius: 5px; }\n"
+      ".coot-plus-swatch { min-width: 0; min-height: 0; padding: 0; }\n"
+      ".coot-plus-swatch > button { min-width: 26px; min-height: 12px; padding: 1px; border-radius: 4px; }\n"
       ".coot-plus-mono { font-family: monospace; }\n"
       ".coot-plus-console-out, .coot-plus-console-in { font-size: 0.95em; }\n"
       ".coot-plus-console-in { border: 1px solid alpha(currentColor, 0.25); border-radius: 6px; }\n"
       ".coot-plus-console-doc { font-family: monospace; font-size: 0.85em; opacity: 0.8; padding: 2px 4px; }\n"
+      ".coot-plus-type-tag { font-size: 0.62em; font-weight: 800; letter-spacing: 0.5px; padding: 0 3px; border-radius: 3px; }\n"
+      ".coot-plus-type-model { color: #8ab4f8; background-color: alpha(#8ab4f8, 0.15); }\n"
+      ".coot-plus-type-map   { color: #7ee2a8; background-color: alpha(#7ee2a8, 0.15); }\n"
+      ".coot-plus-type-diff  { color: #f5a97f; background-color: alpha(#f5a97f, 0.15); }\n"
       // search results
       ".coot-plus-results row { border-radius: 6px; }\n";
    GtkCssProvider *provider = gtk_css_provider_new();
