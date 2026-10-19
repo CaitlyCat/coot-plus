@@ -4531,7 +4531,7 @@ graphics_info_t::apply_undo() {
          // Coot+: say so in the window too - otherwise Undo looks broken
          if (use_graphics_interface_flag)
             add_status_bar_text("Nothing to undo - Undo reverses changes to a model. "
-                                "To remove a model or map, use \u2715 in the Molecules list (inspector)");
+                                "For display changes use Undo View; to remove a model or map use \u2715 in Molecules");
       } else {
 
          std::string cwd = coot::util::current_working_dir();
