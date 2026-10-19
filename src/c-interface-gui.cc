@@ -3899,6 +3899,16 @@ int scroll_wheel_map() {
    return graphics_info_t::scroll_wheel_map;
 }
 
+void set_scroll_wheel_zooms(int state) {
+   graphics_info_t::scroll_wheel_zooms = (state != 0);
+   graphics_info_t::add_status_bar_text(state ? "Scroll wheel: zoom (hold Shift to change the map contour)"
+                                              : "Scroll wheel: map contour (hold Shift to zoom)");
+}
+
+int get_scroll_wheel_zooms() {
+   return graphics_info_t::scroll_wheel_zooms ? 1 : 0;
+}
+
 void set_scroll_wheel_map(int imap) {
 
    if (is_valid_map_molecule(imap)) {

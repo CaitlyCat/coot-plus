@@ -1185,9 +1185,20 @@ graphics_info_t::on_glarea_scrolled(GtkEventControllerScroll *controller,
    }
 
    if (! handled) {
-      if (shift_is_pressed) {
 
-            do_mouse_zoom(dy);
+      // Coot+: on macOS, holding Shift turns a mouse wheel's vertical scroll into a
+      // horizontal one (dy == 0, dx != 0), so Shift-scroll zoom never worked there.
+      // Use dx then. Also: the scroll wheel can be set to zoom
+      // (set_scroll_wheel_zooms()); Shift then does the other thing.
+      double delta = dy;
+      if (delta == 0.0 && shift_is_pressed) delta = dx;
+      bool zoom = scroll_wheel_zooms ? !shift_is_pressed : shift_is_pressed;
+
+      if (delta == 0.0) {
+         // nothing to do
+      } else if (zoom) {
+
+            do_mouse_zoom(delta);
             handled = true;
 
       } else {
@@ -1198,7 +1209,7 @@ graphics_info_t::on_glarea_scrolled(GtkEventControllerScroll *controller,
          if (graphics_info_t::glareas.size() > 0) {
             g_idle_add(idle_contour_function, graphics_info_t::glareas[0]);
          }
-         contour_level_scroll_scrollable_map(dy);
+         contour_level_scroll_scrollable_map(delta);
       }
    }
    // std::cout << "debug:: on_glarea_scrolled() done " << std::endl;

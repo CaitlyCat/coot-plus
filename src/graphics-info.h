@@ -884,6 +884,9 @@ public:
    //
    static int control_is_pressed;
    static int shift_is_pressed;
+   // Coot+: true: the scroll wheel zooms (Shift-scroll changes the contour);
+   //        false: the scroll wheel changes the contour (Shift-scroll zooms) - Coot's default
+   static bool scroll_wheel_zooms;
    static int y_is_pressed;
    static int z_is_pressed;
    static int a_is_pressed;
