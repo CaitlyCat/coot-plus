@@ -2,7 +2,7 @@
 
 **An unofficial, reorganised interface for [Coot](https://github.com/pemsley/coot)**, the crystallography model-building program by Paul Emsley and colleagues. Coot+ is Coot 1 with a task-based layout and some extra tools. It opens the same files, and everything Coot does is still there.
 
-**Download (macOS, Apple Silicon, macOS 15+):** [latest release](https://github.com/CaitlyCat/coot-/releases/latest). The zip has the app, a read-me and the source.
+**Download (macOS, Apple Silicon, macOS 15+):** [latest release](https://github.com/CaitlyCat/coot-plus/releases/latest). The zip has the app, a read-me and the source.
 
 ## What's different
 
@@ -19,7 +19,7 @@
 
 ## How it's made
 
-Coot+ is official Coot (branch `main`) plus a series of patches. The branch [`coot-plus`](https://github.com/CaitlyCat/coot-/tree/coot-plus) is Coot plus those commits. The new interface lives in new files (`src/coot-plus-*`, `python/coot_plus.py`), connected to Coot at a few marked points (`// COOT+ hook`).
+Coot+ is official Coot (branch `main`) plus a series of patches. The branch [`coot-plus`](https://github.com/CaitlyCat/coot-plus/tree/coot-plus) is Coot plus those commits. The new interface lives in new files (`src/coot-plus-*`, `python/coot_plus.py`), connected to Coot at a few marked points (`// COOT+ hook`).
 
 To build it yourself on a Mac with Homebrew, see `UPGRADING.md` in the release zip's Source folder.
 
