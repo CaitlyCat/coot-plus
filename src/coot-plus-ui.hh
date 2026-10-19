@@ -26,6 +26,10 @@ void coot_plus_show_command_search();
 #include <string>
 void coot_plus_message(const std::string &kind, const std::string &text, const std::string &hint = "");
 
+// run Python like the scripting entry does (REPL echo for one line, block for several);
+// output: what it printed; error: the error with a hint. Returns true on success.
+bool coot_plus_run_python(const std::string &code, std::string &output, std::string &error);
+
 // record a line (Python, or a "# comment") in the command log
 void coot_plus_log_command(const std::string &line);
 

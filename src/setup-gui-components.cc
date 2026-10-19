@@ -399,7 +399,7 @@ void add_python_scripting_entry_completion(GtkWidget *entry);
 // terminal only, which a Mac user launching the app never sees.
 //
 // Returns true on success. On failure, message is the error with a hint.
-static bool run_python_console_command(const std::string &cmd, std::string &output, std::string &message) {
+bool run_python_console_command(const std::string &cmd, std::string &output, std::string &message) {
 
    PyObject *main_module = PyImport_AddModule("__main__"); // borrowed
    if (!main_module) { message = "Python: no __main__ module"; return false; }
@@ -413,7 +413,29 @@ static bool run_python_console_command(const std::string &cmd, std::string &outp
    Py_XINCREF(saved_stdout);
    if (capture) PySys_SetObject("stdout", capture);
 
-   PyObject *result = PyRun_String(cmd.c_str(), Py_single_input, globals, globals);
+   // one statement: REPL mode (values are echoed). Several lines: run as a block and,
+   // like Jupyter, echo the value of the last line if it is an expression.
+   PyObject *result = nullptr;
+   if (cmd.find('\n') == std::string::npos) {
+      result = PyRun_String(cmd.c_str(), Py_single_input, globals, globals);
+   } else {
+      PyObject *src = PyUnicode_FromString(cmd.c_str());
+      PyDict_SetItemString(globals, "__coot_plus_src__", src);
+      Py_XDECREF(src);
+      const char *runner =
+         "import ast as __cp_ast\n"
+         "__cp_tree = __cp_ast.parse(__coot_plus_src__, '<console>', 'exec')\n"
+         "__cp_last = __cp_tree.body[-1] if __cp_tree.body else None\n"
+         "if isinstance(__cp_last, __cp_ast.Expr):\n"
+         "    exec(compile(__cp_ast.Module(__cp_tree.body[:-1], []), '<console>', 'exec'), globals())\n"
+         "    __cp_value = eval(compile(__cp_ast.Expression(__cp_last.value), '<console>', 'eval'), globals())\n"
+         "    if __cp_value is not None: print(repr(__cp_value))\n"
+         "else:\n"
+         "    exec(compile(__cp_tree, '<console>', 'exec'), globals())\n";
+      result = PyRun_String(runner, Py_file_input, globals, globals);
+      PyRun_SimpleString("for __cp_n in ('__coot_plus_src__', '__cp_tree', '__cp_last', '__cp_value', '__cp_ast'):\n"
+                         "    globals().pop(__cp_n, None)\n");
+   }
    bool ok = (result != nullptr);
    Py_XDECREF(result);
 
@@ -484,6 +506,15 @@ static std::string console_status_text(const std::string &s) {
    for (auto &c : t) if (c == '\n') c = ' ';
    if (t.length() > 300) t = t.substr(0, 297) + "...";
    return t;
+}
+
+// Coot+: used by the Python console window too
+bool coot_plus_run_python(const std::string &code, std::string &output, std::string &error) {
+   PyGILState_STATE gil = PyGILState_Ensure();
+   bool ok = run_python_console_command(code, output, error);
+   PyGILState_Release(gil);
+   if (ok) coot_plus_log_command(code);
+   return ok;
 }
 
 void on_python_scripting_entry_activated(GtkEntry* entry, gpointer user_data) {
