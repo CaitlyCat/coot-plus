@@ -1791,6 +1791,13 @@ void set_scrollable_map(int imol);
 
   @return the molecule number of the scroll-wheel map */
 int scroll_wheel_map();
+/*! \brief what the scroll wheel does (Coot+)
+
+  @param state 1: the scroll wheel zooms (Shift-scroll changes the contour level),
+               0: the scroll wheel changes the contour level (Shift-scroll zooms) - the default */
+void set_scroll_wheel_zooms(int state);
+/*! \brief return 1 if the scroll wheel zooms, 0 if it changes the contour level */
+int get_scroll_wheel_zooms();
 /*! \brief save previous colour map for molecule number imol
 
   (used so that the map colour can be restored on Cancel) */
