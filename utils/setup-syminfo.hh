@@ -23,6 +23,7 @@
 #ifndef SETUP_SYMINFO_HH
 #define SETUP_SYMINFO_HH
 
-void setup_syminfo();
+// returns true if a symmetry library was found (SYMINFO is then set)
+bool setup_syminfo();
 
 #endif // SETUP_SYMINFO_HH

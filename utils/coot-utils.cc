@@ -58,6 +58,10 @@
 #include <unistd.h> // Also needed for mkdir on Fedora?
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h> // _NSGetExecutablePath()
+#endif
+
 #include "coot-utils.hh"
 
 #include "utils/logging.hh"
@@ -73,6 +77,17 @@ void coot::set_realpath_for_coot_executable(const std::string &argv0) {
    // 20240902-PE patch from Charles - compiling on Windows
 #ifdef _MSC_VER
    char *exec_path = _fullpath(NULL, argv0.c_str(), MAX_PATH);
+#elif defined(__APPLE__)
+   // Coot+: argv[0] is often a bare name (found via $PATH) or a symlink, so
+   // realpath(argv[0]) fails or points to the wrong place. Ask dyld instead.
+   char *exec_path = nullptr;
+   uint32_t buf_size = 0;
+   _NSGetExecutablePath(nullptr, &buf_size);
+   std::string ns_path(buf_size, '\0');
+   if (_NSGetExecutablePath(ns_path.data(), &buf_size) == 0)
+      exec_path = realpath(ns_path.c_str(), NULL);
+   if (!exec_path)
+      exec_path = realpath(argv0.c_str(), NULL);
 #else
    char *exec_path = realpath(argv0.c_str(), NULL);
 #endif
@@ -1019,6 +1034,13 @@ coot::package_data_dir() {
          std::filesystem::path p_3 = p_2 / "share";
          std::filesystem::path p_4 = p_3 / "coot";
          pkgdatadir = p_4.string();
+#ifdef __APPLE__
+         // Coot+: in an app bundle the executable is Contents/MacOS/x and the
+         // data lives in Contents/Resources/share/coot.
+         std::filesystem::path p_bundle = p_2 / "Resources" / "share" / "coot";
+         if (!std::filesystem::exists(p_4) && std::filesystem::exists(p_bundle))
+            pkgdatadir = p_bundle.string();
+#endif
       }
    }
    return pkgdatadir;
