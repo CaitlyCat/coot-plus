@@ -334,6 +334,15 @@ void setup_python_with_coot_modules(int argc, char **argv) {
 
    PyErr_PrintEx(0);
 
+   // Coot+: the scripting entry runs commands in __main__, where these modules were
+   // never imported (so "coot.some_function()" gave NameError). Bind the ones that
+   // were imported above.
+   PyRun_SimpleString("import sys as _coot_sys\n"
+                      "for _coot_m in ('coot', 'coot_utils', 'coot_gui'):\n"
+                      "    if _coot_m in _coot_sys.modules:\n"
+                      "        globals()[_coot_m] = _coot_sys.modules[_coot_m]\n"
+                      "del _coot_sys, _coot_m\n");
+
    // Read the startup-scripts elsewhere. The function is just to
    // read the standard coot python *modules*.
 
