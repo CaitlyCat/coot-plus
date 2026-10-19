@@ -196,39 +196,49 @@ on_save_symm_coords_filechooser_dialog_response(GtkDialog *dialog, int response)
 
 #include "coot-fileselections.h"
 
+// Coot+: delete the pick info attached to the save-symmetry file chooser
+static void delete_symm_atom_pick_info(gpointer p) {
+   delete static_cast<coot::Symm_Atom_Pick_Info_t *>(p);
+}
+
 void save_symmetry_coords_based_on_position() {
 
    graphics_info_t g;
    coot::Symm_Atom_Pick_Info_t sap = g.symmetry_atom_close_to_screen_centre();
    if (sap.success == GL_TRUE) {
       if (is_valid_model_molecule(sap.imol)) {
-         // 20250612-PE We don't use the save_symmetry_coords_filechooser_dialog
-         // because it doesn't have buttons (I don't known why).
-         // so, do instead like on_save_coords_save_button_clicked() (overlay button callback)
 
-         GtkWindow *parent_window = GTK_WINDOW(graphics_info_t::get_main_window());
-         GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_SAVE;
-         GtkWidget *file_chooser_dialog =
-            gtk_file_chooser_dialog_new("Save Symm Coordinates",
-                                        parent_window,
-                                        action,
-                                        ("_Cancel"),
-                                        GTK_RESPONSE_CANCEL,
-                                        ("_Save"),
-                                        GTK_RESPONSE_YES,
-                                        NULL);
+         // Coot+: the builder dialog (save_symmetry_coords_filechooser_dialog) used to
+         // have no action buttons; it now has Cancel/Save in ui/coot.ui, so use it
+         // (rather than making - and leaking - a new dialog each time).
+         GtkWidget *file_chooser_dialog = coot_save_symmetry_chooser();
+         if (!file_chooser_dialog) return;
 
-            // used like this coot::Symm_Atom_Pick_Info_t *symm_info =
-            // (coot::Symm_Atom_Pick_Info_t *) g_object_get_data(G_OBJECT(filechooser), "symm_info");
-
-            coot::Symm_Atom_Pick_Info_t *sap_p = new coot::Symm_Atom_Pick_Info_t(sap);
-            g_object_set_data(G_OBJECT(file_chooser_dialog), "symm_info", sap_p);
+         if (!g_object_get_data(G_OBJECT(file_chooser_dialog), "coot-plus-setup-done")) {
             g_signal_connect(file_chooser_dialog, "response",
                              G_CALLBACK(on_save_symm_coords_filechooser_dialog_response), NULL);
-            gtk_widget_set_visible(file_chooser_dialog, TRUE);
-            set_file_for_save_filechooser(file_chooser_dialog);
             add_filename_filter_button(file_chooser_dialog, COOT_SAVE_COORDS_FILE_SELECTION);
+            graphics_info_t::set_transient_for_main_window(file_chooser_dialog);
+            g_object_set_data(G_OBJECT(file_chooser_dialog), "coot-plus-setup-done", GINT_TO_POINTER(1));
+         }
 
+         // used like this coot::Symm_Atom_Pick_Info_t *symm_info =
+         // (coot::Symm_Atom_Pick_Info_t *) g_object_get_data(G_OBJECT(filechooser), "symm_info");
+         g_object_set_data_full(G_OBJECT(file_chooser_dialog), "symm_info",
+                                new coot::Symm_Atom_Pick_Info_t(sap), delete_symm_atom_pick_info);
+
+         set_file_for_save_filechooser(file_chooser_dialog);
+
+         // default file name: <molecule>_symmetry_<symop><a><b><c>.pdb
+         auto shift_str = [] (int n) { return (n < 0 ? "" : "0") + std::to_string(n); };
+         std::string file_name = graphics_info_t::molecules[sap.imol].name_sans_extension(0);
+         file_name = coot::util::file_name_non_directory(file_name);
+         file_name += "_symmetry_" + std::to_string(sap.symm_trans.isym() + 1);
+         file_name += shift_str(sap.symm_trans.x()) + shift_str(sap.symm_trans.y()) + shift_str(sap.symm_trans.z());
+         file_name += ".pdb";
+         gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(file_chooser_dialog), file_name.c_str());
+
+         gtk_widget_set_visible(file_chooser_dialog, TRUE);
       }
    } else {
       std::string mess = "Not centred on symmetry atom";
