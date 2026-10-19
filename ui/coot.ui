@@ -6,6 +6,7 @@
     <submenu>
       <attribute name="label">File</attribute>
       <section>
+        <attribute name="label">Open</attribute>
         <item>
           <attribute name="label">Open Coordinates...</attribute>
           <attribute name="action">app.open_coordinates_action</attribute>
@@ -22,15 +23,13 @@
           <attribute name="label">Open Map...</attribute>
           <attribute name="action">app.open_map_action</attribute>
         </item>
+        <submenu id="open-recent-menu">
+          <attribute name="label">Open Recent</attribute>
+        </submenu>
         <item>
           <attribute name="label">Import CIF dictionary...</attribute>
           <attribute name="action">app.import_cif_dictionary_action</attribute>
         </item>
-        <submenu id="open-recent-menu">
-          <attribute name="label">Open Recent</attribute>
-        </submenu>
-      </section>
-      <section>
         <item>
           <attribute name="label">Get Monomer...</attribute>
           <attribute name="action">app.get_monomer_action</attribute>
@@ -39,6 +38,13 @@
           <attribute name="label">Search Monomer Library...</attribute>
           <attribute name="action">app.search_monomer_library_action</attribute>
         </item>
+        <item>
+          <attribute name="label">Load Tutorial Model &amp; Data</attribute>
+          <attribute name="action">app.load_tutorial_model_and_data_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Fetch</attribute>
         <item>
           <attribute name="label">Fetch PDB using Accession Code...</attribute>
           <attribute name="action">app.show_accession_code_fetch_frame_oca</attribute>
@@ -52,11 +58,11 @@
           <attribute name="action">app.show_accession_code_fetch_frame_pdb_redo</attribute>
         </item>
         <item>
-         <attribute name="label">Fetch Corresponding AlphaFold Model &amp; Superpose</attribute>
+          <attribute name="label">Fetch Corresponding AlphaFold Model &amp; Superpose</attribute>
           <attribute name="action">app.fetch_and_superpose_alphafold_models_action</attribute>
         </item>
-         <item>
-         <attribute name="label">Fetch AlphaFold Model using Uniprot ID...</attribute>
+        <item>
+          <attribute name="label">Fetch AlphaFold Model using Uniprot ID...</attribute>
           <attribute name="action">app.show_accession_code_fetch_frame_uniprot_id</attribute>
         </item>
         <item>
@@ -77,6 +83,7 @@
         </item>
       </section>
       <section>
+        <attribute name="label">Save</attribute>
         <item>
           <attribute name="label">Save Coordinates...</attribute>
           <attribute name="action">app.save_coordinates_action</attribute>
@@ -90,10 +97,6 @@
           <attribute name="action">app.save_state_action</attribute>
         </item>
         <item>
-          <attribute name="label">Recover Session...</attribute>
-          <attribute name="action">app.recover_session_action</attribute>
-        </item>
-        <item>
           <attribute name="label">Export Map...</attribute>
           <attribute name="action">app.file_export_map_action</attribute>
         </item>
@@ -103,18 +106,19 @@
         </item>
       </section>
       <section>
+        <attribute name="label">Session</attribute>
+        <item>
+          <attribute name="label">Recover Session...</attribute>
+          <attribute name="action">app.recover_session_action</attribute>
+        </item>
         <item>
           <attribute name="label">Delete Molecules and Maps...</attribute>
           <attribute name="action">app.close_molecule_action</attribute>
         </item>
-      </section>
-      <section>
         <item>
           <attribute name="label">Curlew...</attribute>
           <attribute name="action">app.curlew_action</attribute>
         </item>
-      </section>
-      <section>
         <item>
           <attribute name="label">Start RPC Server...</attribute>
           <attribute name="action">app.start_rpc_server_action</attribute>
@@ -130,25 +134,21 @@
     <submenu>
       <attribute name="label">Edit</attribute>
       <section>
+        <attribute name="label">Undo</attribute>
         <item>
-          <attribute name="label">Add Header Link...</attribute>
-          <attribute name="action">app.make_link_action</attribute>
+          <attribute name="label">Undo Molecule Chooser...</attribute>
+          <attribute name="action">app.undo_molecule_chooser_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Residues</attribute>
+        <item>
+          <attribute name="label">Mutate Residue Range...</attribute>
+          <attribute name="action">app.mutate_molecule_action</attribute>
         </item>
         <item>
-          <attribute name="label">Change Chain IDs...</attribute>
-          <attribute name="action">app.change_chain_ids_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Copy Molecule...</attribute>
-          <attribute name="action">app.copy_molecule_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Copy Fragment...</attribute>
-          <attribute name="action">app.copy_molecule_fragment_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Exchange Chain-IDs for Seg-IDs</attribute>
-          <attribute name="action">app.exchange_chain_ids_for_seg_ids_action</attribute>
+          <attribute name="label">Replace Residue...</attribute>
+          <attribute name="action">app.edit_replace_residue_action</attribute>
         </item>
         <item>
           <attribute name="label">Fix Nomenclature Errors...</attribute>
@@ -159,28 +159,23 @@
           <attribute name="action">app.invert_this_chiral_centre_action</attribute>
         </item>
         <item>
-          <attribute name="label">Merge Molecules...</attribute>
-          <attribute name="action">app.merge_molecules_action</attribute>
+          <attribute name="label">Add Header Link...</attribute>
+          <attribute name="action">app.make_link_action</attribute>
         </item>
         <item>
-          <attribute name="label">Merge Water Chains...</attribute>
-          <attribute name="action">app.merge_solvent_chains_action</attribute>
+          <attribute name="label">Restraints...</attribute>
+          <attribute name="action">app.edit_restraints_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Chains and Numbering</attribute>
+        <item>
+          <attribute name="label">Change Chain IDs...</attribute>
+          <attribute name="action">app.change_chain_ids_action</attribute>
         </item>
         <item>
-          <attribute name="label">Move Molecule Here...</attribute>
-          <attribute name="action">app.move_molecule_here_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Mutate Residue Range...</attribute>
-          <attribute name="action">app.mutate_molecule_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Replace Fragment...</attribute>
-          <attribute name="action">app.edit_replace_fragment_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Replace Residue...</attribute>
-          <attribute name="action">app.edit_replace_residue_action</attribute>
+          <attribute name="label">Exchange Chain-IDs for Seg-IDs</attribute>
+          <attribute name="action">app.exchange_chain_ids_for_seg_ids_action</attribute>
         </item>
         <item>
           <attribute name="label">Renumber Residues...</attribute>
@@ -191,68 +186,99 @@
           <attribute name="action">app.renumber_waters_action</attribute>
         </item>
         <item>
-          <attribute name="label">Restraints...</attribute>
-          <attribute name="action">app.edit_restraints_action</attribute>
-        </item>
-        <item>
           <attribute name="label" translatable="no">Sort Chains...</attribute>
           <attribute name="action">app.edit_sort_chains_action</attribute>
         </item>
         <item>
-          <attribute name="label">Undo Molecule Chooser...</attribute>
-          <attribute name="action">app.undo_molecule_chooser_action</attribute>
+          <attribute name="label">Merge Water Chains...</attribute>
+          <attribute name="action">app.merge_solvent_chains_action</attribute>
         </item>
       </section>
       <section>
+        <attribute name="label">Molecules</attribute>
+        <item>
+          <attribute name="label">Copy Molecule...</attribute>
+          <attribute name="action">app.copy_molecule_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Copy Fragment...</attribute>
+          <attribute name="action">app.copy_molecule_fragment_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Merge Molecules...</attribute>
+          <attribute name="action">app.merge_molecules_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Move Molecule Here...</attribute>
+          <attribute name="action">app.move_molecule_here_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Replace Fragment...</attribute>
+          <attribute name="action">app.edit_replace_fragment_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Settings</attribute>
         <item>
           <attribute name="label">Preferences...</attribute>
           <attribute name="action">app.show_preferences_action</attribute>
         </item>
         <submenu>
           <attribute name="label">Settings...</attribute>
-
-            <section>
-              <submenu>
-                <attribute name="label">Rotate/Translate Zone Mode</attribute>
-                <section>
-                  <item>
-                    <attribute name="label">Rotate about Zone Centre</attribute>
-                    <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
-                    <attribute name="target">zone-centre</attribute>
-                  </item>
-                  <item>
-                    <attribute name="label">Rotate about Second-clicked Atom</attribute>
-                    <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
-                    <attribute name="target">second-atom</attribute>
-                  </item>
-                </section>
-              </submenu>
-              <item>
-                <attribute name="label">Set Spin Speed...</attribute>
-                <attribute name="action">app.set_spin_speed_action</attribute>
-              </item>
-              <item>
-                <attribute name="label">Nudge Centre...</attribute>
-                <attribute name="action">app.nudge_centre_action</attribute>
-              </item>
-              <item>
-                <attribute name="label">All Molecules use "Near Chains" Symmetry</attribute>
-                <attribute name="action">app.all_molecules_near_chains_symmetry_action</attribute>
-              </item>
-              <!-- Coot+: "Save Graphics Window Size and Position" removed: GTK4 cannot read or set
+          <section>
+            <submenu>
+              <attribute name="label">Rotate/Translate Zone Mode</attribute>
+              <section>
+                <item>
+                  <attribute name="label">Rotate about Zone Centre</attribute>
+                  <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
+                  <attribute name="target">zone-centre</attribute>
+                </item>
+                <item>
+                  <attribute name="label">Rotate about Second-clicked Atom</attribute>
+                  <attribute name="action">app.rotate_translate_zone_mode_action</attribute>
+                  <attribute name="target">second-atom</attribute>
+                </item>
+              </section>
+            </submenu>
+            <item>
+              <attribute name="label">Set Spin Speed...</attribute>
+              <attribute name="action">app.set_spin_speed_action</attribute>
+            </item>
+            <item>
+              <attribute name="label">Nudge Centre...</attribute>
+              <attribute name="action">app.nudge_centre_action</attribute>
+            </item>
+            <item>
+              <attribute name="label">All Molecules use "Near Chains" Symmetry</attribute>
+              <attribute name="action">app.all_molecules_near_chains_symmetry_action</attribute>
+            </item>
+            <!-- Coot+: "Save Graphics Window Size and Position" removed: GTK4 cannot read or set
                    the window position, and the old code only wrote fixed values -->
-              <item>
-                <attribute name="label">Quick-Save Checkpointing (every 5 min)</attribute>
-                <attribute name="action">app.quick_save_checkpointing_action</attribute>
-              </item>
-            </section>
-
+            <item>
+              <attribute name="label">Quick-Save Checkpointing (every 5 min)</attribute>
+              <attribute name="action">app.quick_save_checkpointing_action</attribute>
+            </item>
+          </section>
         </submenu>
       </section>
     </submenu>
     <submenu>
       <attribute name="label">Calculate</attribute>
       <section>
+        <attribute name="label">Superpose and Align</attribute>
+        <item>
+          <attribute name="label">LSQ Superpose...</attribute>
+          <attribute name="action">app.lsq_superpose_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">SSM Superpose...</attribute>
+          <attribute name="action">app.ssm_superposition_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Superpose Ligands...</attribute>
+          <attribute name="action">app.superpose_ligands_action</attribute>
+        </item>
         <item>
           <attribute name="label">Align and Mutate...</attribute>
           <attribute name="action">app.align_and_mutate_action</attribute>
@@ -268,38 +294,9 @@
             <attribute name="action">app.assign_sequence_action</attribute>
           </item>
         </submenu>
-        <submenu>
-          <attribute name="label">Fit Loop...</attribute>
-          <item>
-            <attribute name="label">Fit Loop by Database Search...</attribute>
-            <attribute name="action">app.fit_loop_by_database_search</attribute>
-          </item>
-          <item>
-            <attribute name="label">Fit Loop by Ramachandran Search...</attribute>
-            <attribute name="action">app.fit_loop_by_ramachandran_search</attribute>
-          </item>
-        </submenu>
-        <item>
-          <attribute name="label">Hydrogen Bonds</attribute>
-          <attribute name="action">app.calculate_hydrogen_bonds_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Load Tutorial Model &amp; Data</attribute>
-          <attribute name="action">app.load_tutorial_model_and_data_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Ligand → 2D</attribute>
-          <attribute name="action">app.ligand_builder_residue_to_2d_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Ligand Builder...</attribute>
-          <attribute name="action">app.ligand_builder_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">LSQ Superpose...</attribute>
-          <attribute name="action">app.lsq_superpose_action</attribute>
-        </item>
-
+      </section>
+      <section>
+        <attribute name="label">Maps</attribute>
         <submenu>
           <attribute name="label">Map Tools...</attribute>
           <section>
@@ -350,22 +347,50 @@
             </item>
           </section>
         </submenu>
-
         <item>
           <attribute name="label">x-ray Map Sharpening/Blurring...</attribute>
           <attribute name="action">app.sharpen_blur_for_xray_action</attribute>
         </item>
-
-        <!-- remove skeleton for now -->
-        <!-- <item> -->
-        <!--   <attribute name="label">Map Skeleton...</attribute> -->
-        <!-- </item> -->
-
+        <item>
+          <attribute name="label">Updating Maps...</attribute>
+          <attribute name="action">app.calculate_updating_maps_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Ligands</attribute>
+        <item>
+          <attribute name="label">Ligand Builder...</attribute>
+          <attribute name="action">app.ligand_builder_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Ligand → 2D</attribute>
+          <attribute name="action">app.ligand_builder_residue_to_2d_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Model</attribute>
+        <submenu>
+          <attribute name="label">Fit Loop...</attribute>
+          <item>
+            <attribute name="label">Fit Loop by Database Search...</attribute>
+            <attribute name="action">app.fit_loop_by_database_search</attribute>
+          </item>
+          <item>
+            <attribute name="label">Fit Loop by Ramachandran Search...</attribute>
+            <attribute name="action">app.fit_loop_by_ramachandran_search</attribute>
+          </item>
+        </submenu>
+        <item>
+          <attribute name="label">Hydrogen Bonds</attribute>
+          <attribute name="action">app.calculate_hydrogen_bonds_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Scripting</attribute>
         <item>
           <attribute name="label">Run Script...</attribute>
           <attribute name="action">app.run_script_action</attribute>
         </item>
-
         <submenu>
           <attribute name="label">Scripting...</attribute>
           <item>
@@ -373,80 +398,40 @@
             <attribute name="action">app.scripting_python_action</attribute>
           </item>
         </submenu>
-
-        <item>
-          <attribute name="label">SSM Superpose...</attribute>
-          <attribute name="action">app.ssm_superposition_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Superpose Ligands...</attribute>
-          <attribute name="action">app.superpose_ligands_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Updating Maps...</attribute>
-          <attribute name="action">app.calculate_updating_maps_action</attribute>
-        </item>
-
       </section>
     </submenu>
-
     <submenu>
       <attribute name="label">Modelling</attribute>
+      <section>
+        <attribute name="label">Fit and Refine</attribute>
         <item>
-          <attribute name="label">Add An Atom</attribute>
-          <attribute name="action">app.add_an_atom_action</attribute>
+          <attribute name="label">Fill Partial Residues</attribute>
+          <attribute name="action">app.fill_partial_residues_action</attribute>
+          <attribute name="accel">k</attribute>
         </item>
         <item>
-          <attribute name="label">Add Hydrogen Atoms</attribute>
-          <attribute name="action">app.add_hydrogen_atoms_action</attribute>
+          <attribute name="label">Rigid-Body Fit Residue Ranges</attribute>
+          <attribute name="action">app.rigid_body_fit_residue_ranges_action</attribute>
         </item>
         <item>
-          <attribute name="label">Add Hydrogen Atoms Using REFMAC</attribute>
-          <attribute name="action">app.add_hydrogen_atoms_using_refmac_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Add Other Solvent Molecules...</attribute>
-          <attribute name="action">app.add_other_solvent_molecules_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Add OXT to residue...</attribute>
-          <attribute name="action">app.add_OXT_to_residue_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Add PTM to residue...</attribute>
-          <attribute name="action">app.add_PTM_to_residue_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Arrange Waters Around Protein</attribute>
-          <attribute name="action">app.arrange_waters_around_protein_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Assign (Force) HETATMs for this Residue</attribute>
-          <attribute name="action">app.assign_hetatms_for_this_residue_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Assign HETATMs to Molecule...</attribute>
-          <attribute name="action">app.assign_hetatoms_to_molecule_action</attribute>
+          <attribute name="label">Rigid-Body Fit Molecule</attribute>
+          <attribute name="action">app.rigid_body_fit_molecule_action</attribute>
         </item>
         <item>
           <attribute name="label">Backrub Rotamers for Chain</attribute>
           <attribute name="action">app.backrub_rotamers_for_chain_action</attribute>
         </item>
         <item>
-          <attribute name="label">cis ↔ trans</attribute>
-          <attribute name="action">app.cis_trans_convert_action</attribute>
+          <attribute name="label">Rebuild Fragment using DBLoop (Small)</attribute>
+          <attribute name="action">app.rebuild_fragment_using_dbloop_action_small</attribute>
         </item>
         <item>
-          <attribute name="label">DNA/RNA Models...</attribute>
-          <attribute name="action">app.dna_rna_models_action</attribute>
+          <attribute name="label">Rebuild Fragment using DBLoop (Bigger)</attribute>
+          <attribute name="action">app.rebuild_fragment_using_dbloop_action_bigger</attribute>
         </item>
         <item>
-          <attribute name="label">Find Ligands...</attribute>
-          <attribute name="action">app.find_ligands_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Find Waters...</attribute>
-          <attribute name="action">app.find_waters_action</attribute>
+          <attribute name="label">Place Helix Here</attribute>
+          <attribute name="action">app.place_helix_here_action</attribute>
         </item>
         <submenu>
           <attribute name="label">Find Secondary Structure in Map...</attribute>
@@ -460,10 +445,94 @@
           </item>
         </submenu>
         <item>
-          <attribute name="label">Fill Partial Residues</attribute>
-          <attribute name="action">app.fill_partial_residues_action</attribute>
+          <attribute name="label">DNA/RNA Models...</attribute>
+          <attribute name="action">app.dna_rna_models_action</attribute>
         </item>
-
+      </section>
+      <section>
+        <attribute name="label">Add</attribute>
+        <item>
+          <attribute name="label">Add An Atom</attribute>
+          <attribute name="action">app.add_an_atom_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Add Hydrogen Atoms</attribute>
+          <attribute name="action">app.add_hydrogen_atoms_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Add Hydrogen Atoms Using REFMAC</attribute>
+          <attribute name="action">app.add_hydrogen_atoms_using_refmac_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Add OXT to residue...</attribute>
+          <attribute name="action">app.add_OXT_to_residue_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Add PTM to residue...</attribute>
+          <attribute name="action">app.add_PTM_to_residue_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Phosphorylate This Residue</attribute>
+          <attribute name="action">app.phosphorylate_this_residue_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">N-linked Glycan WTA...</attribute>
+          <attribute name="action">app.glyco_wta_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">N-linked Glycan LMA...</attribute>
+          <attribute name="action">app.glyco_lma_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Ligands and Waters</attribute>
+        <item>
+          <attribute name="label">Find Ligands...</attribute>
+          <attribute name="action">app.find_ligands_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Find Waters...</attribute>
+          <attribute name="action">app.find_waters_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Add Other Solvent Molecules...</attribute>
+          <attribute name="action">app.add_other_solvent_molecules_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Arrange Waters Around Protein</attribute>
+          <attribute name="action">app.arrange_waters_around_protein_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Split Water</attribute>
+          <attribute name="action">app.split_water_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Assign (Force) HETATMs for this Residue</attribute>
+          <attribute name="action">app.assign_hetatms_for_this_residue_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Assign HETATMs to Molecule...</attribute>
+          <attribute name="action">app.assign_hetatoms_to_molecule_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Change</attribute>
+        <item>
+          <attribute name="label">cis ↔ trans</attribute>
+          <attribute name="action">app.cis_trans_convert_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Replace Residue...</attribute>
+          <attribute name="action">app.replace_residue_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Reverse Chain Direction</attribute>
+          <attribute name="action">app.reverse_chain_direction_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Symm Shift Reference Chain Here</attribute>
+          <attribute name="action">app.symm_shift_reference_chain_here_action</attribute>
+        </item>
         <submenu>
           <attribute name="label">NCS Model Tools...</attribute>
           <item>
@@ -493,75 +562,27 @@
           <!--   <attribute name="action">app.ncs_ligands_action</attribute> -->
           <!-- </item> -->
         </submenu>
-        <item>
-          <attribute name="label">N-linked Glycan WTA...</attribute>
-          <attribute name="action">app.glyco_wta_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">N-linked Glycan LMA...</attribute>
-          <attribute name="action">app.glyco_lma_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Phosphorylate This Residue</attribute>
-          <attribute name="action">app.phosphorylate_this_residue_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Place Helix Here</attribute>
-          <attribute name="action">app.place_helix_here_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Rebuild Fragment using DBLoop (Small)</attribute>
-          <attribute name="action">app.rebuild_fragment_using_dbloop_action_small</attribute>
-        </item>
-        <item>
-          <attribute name="label">Rebuild Fragment using DBLoop (Bigger)</attribute>
-          <attribute name="action">app.rebuild_fragment_using_dbloop_action_bigger</attribute>
-        </item>
-        <item>
-          <attribute name="label">Replace Residue...</attribute>
-          <attribute name="action">app.replace_residue_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Reverse Chain Direction</attribute>
-          <attribute name="action">app.reverse_chain_direction_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Rigid-Body Fit Residue Ranges</attribute>
-          <attribute name="action">app.rigid_body_fit_residue_ranges_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Rigid-Body Fit Molecule</attribute>
-          <attribute name="action">app.rigid_body_fit_molecule_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Split Water</attribute>
-          <attribute name="action">app.split_water_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Symm Shift Reference Chain Here</attribute>
-          <attribute name="action">app.symm_shift_reference_chain_here_action</attribute>
-        </item>
+      </section>
+      <section>
         <item>
           <attribute name="label">What's This?</attribute>
           <attribute name="action">app.whats_this_action</attribute>
         </item>
+      </section>
     </submenu>
-
     <submenu>
       <attribute name="label">Draw</attribute>
       <submenu>
         <attribute name="label">View</attribute>
-          <section>
-            <item>
-              <attribute name="label">Alt-Conf Switcher</attribute>
-              <attribute name="action">app.alt_conf_switcher_action</attribute>
-            </item>
-
+        <section>
+          <item>
+            <attribute name="label">Alt-Conf Switcher</attribute>
+            <attribute name="action">app.alt_conf_switcher_action</attribute>
+          </item>
           <!-- <item> -->
           <!--   <attribute name="label">Background Colour...</attribute> -->
           <!--   <attribute name="action">app.background_colour_action</attribute> -->
           <!-- </item> -->
-
           <submenu>
             <attribute name="label">Background Colour...</attribute>
             <item>
@@ -589,7 +610,6 @@
               <attribute name="action">app.background_white_action</attribute>
             </item>
           </submenu>
-
           <item>
             <attribute name="label">Display Only Active</attribute>
             <attribute name="action">app.display_only_active_action</attribute>
@@ -643,6 +663,7 @@
           <item>
             <attribute name="label">Spin View</attribute>
             <attribute name="action">app.spin_view_action</attribute>
+            <attribute name="accel">i</attribute>
           </item>
           <item>
             <attribute name="label">Rock View</attribute>
@@ -655,6 +676,7 @@
           <item>
             <attribute name="label">Undo Symmetry View</attribute>
             <attribute name="action">app.undo_symmetry_view_action</attribute>
+            <attribute name="accel">&lt;Shift&gt;v</attribute>
           </item>
           <item>
             <attribute name="label">Scale Up Graphics</attribute>
@@ -666,10 +688,10 @@
           </item>
         </section>
       </submenu>
-
       <submenu>
         <attribute name="label">Molecule</attribute>
         <section>
+          <attribute name="label">Representation</attribute>
           <item>
             <attribute name="label">Bond Colours...</attribute>
             <attribute name="action">app.bond_colours_action</attribute>
@@ -677,36 +699,6 @@
           <item>
             <attribute name="label">Bond and Atom Parameters...</attribute>
             <attribute name="action">app.bond_parameters_action</attribute>
-          </item>
-
-          <item>
-            <attribute name="label">Gaussian Surface...</attribute>
-            <attribute name="action">app.gaussian_surface_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Molecular Surface</attribute>
-            <attribute name="action">app.molecular_surface_action</attribute>
-          </item>
-              <item>
-            <attribute name="label">Worms</attribute>
-            <attribute name="action">app.worms_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Bendix (helices)</attribute>
-            <attribute name="action">app.bendix_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Tube (helices)</attribute>
-            <attribute name="action">app.tube_helices_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Map Caps</attribute>
-            <attribute name="action">app.map_caps_action</attribute>
-          </item>
-          <item>
-            <!-- this needs an atom selection overlay -->
-            <attribute name="label">Electrostatic Surface</attribute>
-            <attribute name="action">app.electrostatic_surface_action</attribute>
           </item>
           <submenu>
             <attribute name="label">Ribbons...</attribute>
@@ -723,36 +715,53 @@
               <attribute name="action">app.ribbons_colour_by_secondary_structure_action</attribute>
             </item>
           </submenu>
-
-          <!-- this does not belong here - move this configuration into preferences -->
-          <!-- <item> -->
-          <!--   <attribute name="label">Centre Atom Label...</attribute> -->
-          <!--   <attribute name="action">app.on_draw_cente__action</attribute> -->
-          <!-- </item> -->
           <item>
-            <attribute name="label">Cell &amp; Symmetry...</attribute>
-            <attribute name="action">app.draw_cell_and_symmetry_action</attribute>
+            <attribute name="label">Worms</attribute>
+            <attribute name="action">app.worms_action</attribute>
           </item>
-          <!-- this does not belong here - move this configuration into preferences -->
-          <!-- <item> -->
-          <!--   <attribute name="label">Central Atom Label...</attribute> -->
-          <!--   <attribute name="action">app.draw_central_atom_label_action</attribute> -->
-          <!-- </item> -->
           <item>
-            <attribute name="label">Go To Atom...</attribute>
-            <attribute name="action">app.go_to_atom_action</attribute>
+            <attribute name="label">Tube (helices)</attribute>
+            <attribute name="action">app.tube_helices_action</attribute>
           </item>
+          <item>
+            <attribute name="label">Bendix (helices)</attribute>
+            <attribute name="action">app.bendix_action</attribute>
+          </item>
+          <item>
+            <attribute name="label">Gaussian Surface...</attribute>
+            <attribute name="action">app.gaussian_surface_action</attribute>
+          </item>
+          <item>
+            <attribute name="label">Molecular Surface</attribute>
+            <attribute name="action">app.molecular_surface_action</attribute>
+          </item>
+          <item>
+            <!-- this needs an atom selection overlay -->
+            <attribute name="label">Electrostatic Surface</attribute>
+            <attribute name="action">app.electrostatic_surface_action</attribute>
+          </item>
+        </section>
+        <section>
+          <attribute name="label">Maps and Symmetry</attribute>
           <item>
             <attribute name="label">Map Parameters...</attribute>
             <attribute name="action">app.map_parameters_action</attribute>
+          </item>
+          <item>
+            <attribute name="label">Map Caps</attribute>
+            <attribute name="action">app.map_caps_action</attribute>
+          </item>
+          <item>
+            <attribute name="label">Cell &amp; Symmetry...</attribute>
+            <attribute name="action">app.draw_cell_and_symmetry_action</attribute>
           </item>
           <item>
             <attribute name="label">NCS Ghost Control...</attribute>
             <attribute name="action">app.ghost_control_action</attribute>
           </item>
         </section>
-
         <section>
+          <attribute name="label">Labels</attribute>
           <item>
             <attribute name="label">Label Atoms in Residue</attribute>
             <attribute name="action">app.label_atoms_in_residue_action</attribute>
@@ -768,10 +777,15 @@
           <item>
             <attribute name="label">Clear Atom Labels</attribute>
             <attribute name="action">app.clear_atom_labels_action</attribute>
+            <attribute name="accel">&lt;Shift&gt;l</attribute>
           </item>
         </section>
-
         <section>
+          <attribute name="label">Find</attribute>
+          <item>
+            <attribute name="label">Go To Atom...</attribute>
+            <attribute name="action">app.go_to_atom_action</attribute>
+          </item>
           <item>
             <attribute name="label">Residue Type Selection</attribute>
             <attribute name="action">app.residue_type_selection_action</attribute>
@@ -788,69 +802,28 @@
             <attribute name="label">Residues With Missing Atoms...</attribute>
             <attribute name="action">app.residues_with_missing_atoms_action</attribute>
           </item>
-        </section>
-        <section>
-          <!-- <item>
-            <attribute name="label">Gaussian Surface...</attribute>
-            <attribute name="action">app.gaussian_surface_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Molecular Surface</attribute>
-            <attribute name="action">app.molecular_surface_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Map Caps</attribute>
-            <attribute name="action">app.map_caps_action</attribute>
-          </item> -->
-          <!-- <item>
-            <attribute name="label">Electrostatic Surface</attribute>
-            <attribute name="action">app.electrostatic_surface_action</attribute>
-          </item> -->
-          <!-- <item>
-            <attribute name="label">Ribbons: By Chain</attribute>
-            <attribute name="action">app.ribbons_colour_by_chain_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Ribbons: Rainbow</attribute>
-            <attribute name="action">app.ribbons_colour_rainbow_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Ribbons: Sec. Struct.</attribute>
-            <attribute name="action">app.ribbons_colour_by_secondary_structure_action</attribute>
-          </item> -->
-      
-        </section>
-        <section>
           <item>
             <attribute name="label">Sequence View</attribute>
             <attribute name="action">app.sequence_view_action</attribute>
           </item>
-          <!-- reactivate this one day hopefully -->
-          <!-- <item> -->
-          <!--   <attribute name="label">Stereo...</attribute> -->
-          <!-- </item> -->
         </section>
       </submenu>
-
+      <item>
+        <attribute name="label">Shader Settings...</attribute>
+        <attribute name="action">app.show_shader_preferences_action</attribute>
+      </item>
+      <submenu>
+        <attribute name="label">Scene Presets...</attribute>
         <item>
-          <attribute name="label">Shader Settings...</attribute>
-          <attribute name="action">app.show_shader_preferences_action</attribute>
+          <attribute name="label">Model-Building Mode</attribute>
+          <attribute name="action">app.scene_preset_model_building_action</attribute>
         </item>
-
-        <submenu>
-          <attribute name="label">Scene Presets...</attribute>
-          <item>
-            <attribute name="label">Model-Building Mode</attribute>
-            <attribute name="action">app.scene_preset_model_building_action</attribute>
-          </item>
-          <item>
-            <attribute name="label">Figure-Making Mode</attribute>
-            <attribute name="action">app.scene_preset_figure_making_action</attribute>
-          </item>
-        </submenu>
-
+        <item>
+          <attribute name="label">Figure-Making Mode</attribute>
+          <attribute name="action">app.scene_preset_figure_making_action</attribute>
+        </item>
+      </submenu>
     </submenu>
-
     <submenu>
       <attribute name="label">Measures</attribute>
       <section>
@@ -865,6 +838,7 @@
         <item>
           <attribute name="label">Residue Info...</attribute>
           <attribute name="action">app.residue_info_action</attribute>
+          <attribute name="accel">&lt;Control&gt;i</attribute>
         </item>
         <!-- reactivate this one day -->
         <!-- <item> -->
@@ -885,26 +859,44 @@
         </item>
       </section>
     </submenu>
-
     <submenu>
       <attribute name="label">Validate</attribute>
       <section>
+        <attribute name="label">Overview</attribute>
         <item>
           <attribute name="label">Validation graphs</attribute>
           <attribute name="action">app.show_validation_graphs_dialog</attribute>
         </item>
         <item>
+          <attribute name="label">Validation Outliers</attribute>
+          <attribute name="action">app.validation_outliers_action</attribute>
+        </item>
+        <item>
+          <attribute name="label">Overlaps, Peptides, CBeta, Rama &amp; Rota Outliers</attribute>
+          <attribute name="action">app.overlaps_peptides_cbeta_ramas_and_rotas_action</attribute>
+        </item>
+        <item>
           <attribute name="label">Ramachandran Plot</attribute>
           <attribute name="action">app.ramachandran_plot_action</attribute>
         </item>
+      </section>
+      <section>
+        <attribute name="label">Density</attribute>
         <item>
-          <attribute name="label">Alignment vs Reference PIR</attribute>
-          <attribute name="action">app.alignment_vs_pir_action</attribute>
+          <attribute name="label">Difference Map Peaks...</attribute>
+          <attribute name="action">app.difference_map_peaks_action</attribute>
         </item>
         <item>
-          <attribute name="label">Atoms with Zero Occupancies...</attribute>
-          <attribute name="action">app.atoms_with_zero_occupancies_action</attribute>
+          <attribute name="label">Unmodelled blobs...</attribute>
+          <attribute name="action">app.unmodelled_blobs_action</attribute>
         </item>
+        <item>
+          <attribute name="label">Pepflips from Difference Map...</attribute>
+          <attribute name="action">app.pepflips_from_difference_map_action</attribute>
+        </item>
+      </section>
+      <section>
+        <attribute name="label">Contacts and Waters</attribute>
         <item>
           <attribute name="label">Atom Overlaps</attribute>
           <attribute name="action">app.atoms_overlaps_action</attribute>
@@ -918,43 +910,34 @@
           <attribute name="action">app.check_delete_waters_action</attribute>
         </item>
         <item>
-          <attribute name="label">Difference Map Peaks...</attribute>
-          <attribute name="action">app.difference_map_peaks_action</attribute>
-        </item>
-        <item>
           <attribute name="label">Highly Coordinated Waters</attribute>
           <attribute name="action">app.highly_coordinates_waters_action</attribute>
         </item>
-        <!-- restore this one day -->
-        <!-- <item> -->
-        <!--   <attribute name="label">Kleywegt Plot...</attribute> -->
-        <!--   <attribute name="action">app.on_undo_symmetry_view1_action</attribute> -->
-        <!-- </item> -->
         <item>
-          <attribute name="label">Overlaps, Peptides, CBeta, Rama &amp; Rota Outliers</attribute>
-          <attribute name="action">app.overlaps_peptides_cbeta_ramas_and_rotas_action</attribute>
+          <attribute name="label">Atoms with Zero Occupancies...</attribute>
+          <attribute name="action">app.atoms_with_zero_occupancies_action</attribute>
         </item>
+      </section>
+      <section>
+        <attribute name="label">Other</attribute>
         <item>
-          <attribute name="label">Pepflips from Difference Map...</attribute>
-          <attribute name="action">app.pepflips_from_difference_map_action</attribute>
+          <attribute name="label">Alignment vs Reference PIR</attribute>
+          <attribute name="action">app.alignment_vs_pir_action</attribute>
         </item>
         <item>
           <attribute name="label">Refmac Log Validation</attribute>
           <attribute name="action">app.refmac_log_validation_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Unmodelled blobs...</attribute>
-          <attribute name="action">app.unmodelled_blobs_action</attribute>
-        </item>
-        <item>
-          <attribute name="label">Validation Outliers</attribute>
-          <attribute name="action">app.validation_outliers_action</attribute>
         </item>
       </section>
     </submenu>
     <submenu>
       <attribute name="label">About</attribute>
       <section>
+        <item>
+          <attribute name="label">Search Commands...</attribute>
+          <attribute name="action">app.command_search_action</attribute>
+          <attribute name="accel">&lt;Meta&gt;k</attribute>
+        </item>
         <item>
           <attribute name="label">About Coot...</attribute>
           <attribute name="action">app.about_coot_action</attribute>
