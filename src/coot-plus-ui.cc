@@ -52,14 +52,23 @@ struct command_t {
    std::string shortcut;  // display text, e.g. "Ctrl-G", "Shift-R"
    std::string keywords;  // lower case synonyms for searching
    int priority = 0;      // search ranking bonus for the commands people usually mean
+   std::string description; // what it does (hover text and search results) - verified in the source
+   std::string icon;        // icon name (Coot pixmaps), may be empty
+   std::string toolbar_id;  // builder id, for toolbar buttons
    std::function<void()> run;
 };
+
+const std::map<std::string, std::string> &descriptions(); // key: "app.action", "tb:builder-id", "kb:Description"
+const std::map<std::string, std::string> &action_icons();
 
 GtkApplication *coot_plus_app = nullptr;
 std::vector<command_t> commands;
 std::map<std::string, int> use_count; // key: label + path
 
 bool updating_widgets = false; // guard: don't act on our own set_active()/set_value()
+
+GtkWidget *classic_toolbar = nullptr; // Coot's original vertical build toolbar
+void set_classic_toolbar_visible(bool state);
 
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_priorities();
@@ -277,13 +286,15 @@ const std::vector<std::pair<std::string, std::string> > &toolbar_buttons() {
       {"flip_peptide_button",                       "Flip Peptide"},
       {"side_chain_180_flip_button",                "Sidechain 180° Flip"},
       {"simple_mutate_button",                      "Simple Mutate"},
-      {"mutate_and_autofit_menubutton",             "Mutate & Auto-Fit"},
       {"vertical_toolbar_add_terminal_residue_button", "Add Terminal Residue"},
       {"add_alt_conf_button",                       "Add Alt Conf"},
-      {"refine_menubutton",                         "Refine Menu"},
-      {"delete_menubutton",                         "Delete Menu"},
       {"undo_button",                               "Undo"},
-      {"redo_button",                               "Redo"}};
+      {"redo_button",                               "Redo"},
+      {"toolbar_reset_view_button",                 "Reset View"},
+      {"toolbar_display_manager_button",            "Display Manager"},
+      {"go_to_ligand_button",                       "Go to Next Ligand"},
+      {"graphics-grab-focus-button",                "Grab Keyboard Focus"},
+      {"python_scripting_button",                   "Python Command Line"}};
    return v;
 }
 
@@ -315,14 +326,27 @@ void build_command_registry(GtkApplication *application) {
       c.label = tb.second;
       c.path = "Toolbar";
       c.keywords = keywords_for(tb.second);
+      c.toolbar_id = tb.first;
+      for (GtkWidget *ch = w; ch; ) { // the button's icon
+         if (GTK_IS_IMAGE(ch)) {
+            const char *icon_name = gtk_image_get_icon_name(GTK_IMAGE(ch));
+            if (icon_name) c.icon = icon_name;
+            break;
+         }
+         GtkWidget *next = gtk_widget_get_first_child(ch);
+         if (!next) {
+            while (ch && ch != w && !gtk_widget_get_next_sibling(ch)) ch = gtk_widget_get_parent(ch);
+            next = (ch && ch != w) ? gtk_widget_get_next_sibling(ch) : nullptr;
+         }
+         ch = next;
+      }
       std::string id = tb.first;
       c.run = [id] () {
          GtkWidget *b = widget_from_builder(id);
          if (!b) return;
-         if (GTK_IS_MENU_BUTTON(b))
-            gtk_menu_button_popup(GTK_MENU_BUTTON(b));
-         else
-            gtk_widget_activate(b);
+         // not gtk_widget_activate(): GtkButton ignores that until it has been shown,
+         // and the classic toolbar is usually hidden
+         if (GTK_IS_BUTTON(b)) g_signal_emit_by_name(b, "clicked");
       };
       commands.push_back(c);
    }
@@ -383,6 +407,19 @@ void build_command_registry(GtkApplication *application) {
 
    add_coot_plus_commands();
    set_priorities();
+
+   for (auto &c : commands) {
+      std::string key = !c.toolbar_id.empty() ? "tb:" + c.toolbar_id
+                      : (!c.action.empty() ? c.action : "kb:" + c.label);
+      auto it = descriptions().find(key);
+      if (it == descriptions().end() && c.path == "Keyboard")
+         it = descriptions().find("kb:" + to_lower(c.label));
+      if (it != descriptions().end()) c.description = it->second;
+      if (c.icon.empty() && !c.action.empty()) {
+         auto it_i = action_icons().find(c.action);
+         if (it_i != action_icons().end()) c.icon = it_i->second;
+      }
+   }
 }
 
 void set_priorities() {
@@ -514,6 +551,14 @@ GtkWidget *make_result_row(const command_t &c) {
    }
    gtk_box_append(GTK_BOX(row_box), top);
 
+   if (!c.description.empty()) {
+      GtkWidget *d = gtk_label_new(c.description.c_str());
+      gtk_label_set_xalign(GTK_LABEL(d), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(d), TRUE);
+      gtk_label_set_max_width_chars(GTK_LABEL(d), 60);
+      gtk_widget_add_css_class(d, "caption");
+      gtk_box_append(GTK_BOX(row_box), d);
+   }
    std::string where = c.path.empty() ? std::string("Menu") : c.path;
    GtkWidget *path = gtk_label_new(where.c_str());
    gtk_label_set_xalign(GTK_LABEL(path), 0.0);
@@ -852,6 +897,8 @@ void add_coot_plus_commands() {
        [] () { set_scroll_mode(false); });
    add("Toggle Scroll Wheel Zoom/Contour", "Toolbar > Scroll", "mouse scroll wheel zoom contour switch",
        [] () { set_scroll_mode(!get_scroll_wheel_zooms()); });
+   add("Show/Hide Classic Build Toolbar", "Build", "classic toolbar old buttons right column vertical",
+       [] () { if (classic_toolbar) set_classic_toolbar_visible(!gtk_widget_get_visible(classic_toolbar)); });
    add("Show/Hide Task Sidebar", "Toolbar > Tasks", "panel sidebar tasks workspace",
        [] () { if (sidebar_panel) gtk_widget_set_visible(sidebar_panel, !gtk_widget_get_visible(sidebar_panel)); });
    add("Show/Hide Inspector", "Toolbar > Inspector", "panel inspector properties",
@@ -864,56 +911,132 @@ void add_coot_plus_commands() {
 
 struct task_t {
    std::string name;
+   std::string icon;
    std::string hint;
-   std::vector<std::string> tools; // "app.action[=target]", "kb:Description", "tb:Label", "special:..."
+   // entries:
+   //   "app.action[=target][|Label]"    a command (optional shorter label)
+   //   "kb:Description[|Label]"         a key binding
+   //   "tb:Toolbar Label[|Label]"       a toolbar button
+   //   "menu:builder-menu-id|Label|icon" a button that opens one of the toolbar menus
+   //   "section:Title"                  a heading
+   //   "special:..."                    a custom widget
+   std::vector<std::string> tools;
 };
 
 const std::vector<task_t> &tasks() {
    static const std::vector<task_t> v = {
-      {"Load", "Open models, data and maps", {
-            "app.open_coordinates_action", "app.auto_open_mtz_action", "app.open_dataset_action",
-            "app.open_map_action", "app.show_accession_code_fetch_frame_oca",
-            "app.show_accession_code_fetch_frame_eds", "app.show_accession_code_fetch_frame_uniprot_id",
-            "app.get_monomer_action", "app.import_cif_dictionary_action", "app.recover_session_action",
-            "app.load_tutorial_model_and_data_action"}},
-      {"Navigate", "Move around the model", {
-            "app.go_to_atom_action", "kb:Show Go To Residue Keyboarding Window", "kb:Go To Ligand",
-            "kb:go to blob", "app.undo_last_navigation_action", "app.sequence_view_action",
-            "app.display_only_active_action", "app.residue_type_selection_action"}},
-      {"Maps", "Contour, radius and map tools", {
-            "special:maps-hint", "app.map_parameters_action", "kb:Increase Map Radius", "kb:Decrease Map Radius",
-            "kb:Display Next Map", "kb:Change Scroll-wheel map", "app.make_a_difference_map_action",
-            "app.set_map_is_difference_map_action", "app.sharpen_blur_for_xray_action",
-            "app.another_contour_level_action", "app.mask_map_by_atom_selection_action"}},
-      {"Symmetry", "Crystal neighbours and unit cell", {
-            "special:symmetry-toggle", "app.draw_cell_and_symmetry_action", "app.undo_symmetry_view_action",
-            "app.all_molecules_near_chains_symmetry_action", "app.save_symmetry_coordinates_action",
-            "app.symm_shift_reference_chain_here_action"}},
-      {"Build", "Fit and fix the model", {
-            "kb:Sphere Refine", "kb:Refine Residue Auto-Accept", "tb:Refine Menu", "tb:Auto-Fit Rotamer",
-            "tb:Rotamers", "tb:Flip Peptide", "tb:Sidechain 180° Flip", "tb:Mutate & Auto-Fit",
-            "tb:Simple Mutate", "app.fill_partial_residues_action", "tb:Add Terminal Residue",
-            "tb:Add Alt Conf", "kb:Add Water Here", "app.rigid_body_fit_residue_ranges_action",
-            "app.fit_loop_by_database_search", "tb:Delete Menu", "tb:Undo", "tb:Redo"}},
-      {"Ligands", "Find, fit and check ligands", {
-            "app.get_monomer_action", "app.find_ligands_action", "kb:Go To Ligand", "app.ligand_builder_action",
-            "app.superpose_ligands_action", "app.fetch_pdbe_ligand_description_action",
+      {"Load", "coot-plus-load-symbolic", "Open models, data and maps", {
+            "section:Open",
+            "app.open_coordinates_action", "app.auto_open_mtz_action", "app.open_dataset_action|Open Reflection Data",
+            "app.open_map_action",
+            "section:Fetch from the web",
+            "app.show_accession_code_fetch_frame_oca|PDB Entry", "app.show_accession_code_fetch_frame_eds|PDB Entry + Map (EDS)",
+            "app.show_accession_code_fetch_frame_pdb_redo|PDB-REDO Model + Map",
+            "app.show_accession_code_fetch_frame_uniprot_id|AlphaFold Model",
+            "section:Ligand dictionaries",
+            "app.get_monomer_action", "app.import_cif_dictionary_action",
+            "section:Session",
+            "app.recover_session_action", "app.load_tutorial_model_and_data_action|Tutorial Model + Data"}},
+      {"Navigate", "coot-plus-navigate-symbolic", "Move around the model", {
+            "section:Go to",
+            "app.go_to_atom_action", "kb:Show Go To Residue Keyboarding Window|Type a Residue Number",
+            "tb:Go to Next Ligand",
+            "section:View",
+            "tb:Reset View", "app.undo_last_navigation_action", "app.display_only_active_action",
+            "section:Molecules",
+            "tb:Display Manager", "app.sequence_view_action", "app.residue_type_selection_action"}},
+      {"Maps", "coot-plus-maps-symbolic", "Contour, radius and map tools", {
+            "special:maps-hint",
+            "section:Contour and radius",
+            "app.map_parameters_action", "kb:Increase Map Radius", "kb:Decrease Map Radius",
+            "kb:Display Next Map", "kb:Change Scroll-wheel map",
+            "section:Make maps",
+            "app.make_a_difference_map_action", "app.sharpen_blur_for_xray_action|Sharpen / Blur",
+            "app.another_contour_level_action", "app.mask_map_by_atom_selection_action",
+            "app.set_map_is_difference_map_action"}},
+      {"Symmetry", "coot-plus-symmetry-symbolic", "Crystal neighbours and unit cell", {
+            "special:symmetry-toggle",
+            "section:Tools",
+            "app.draw_cell_and_symmetry_action|Symmetry Settings", "app.undo_symmetry_view_action",
+            "app.all_molecules_near_chains_symmetry_action|Whole Chains for All Models",
+            "app.save_symmetry_coordinates_action", "app.symm_shift_reference_chain_here_action"}},
+      {"Build", "coot-plus-build-symbolic", "Fit and fix the model", {
+            "section:Refine",
+            "app.refine_sphere|Refine Sphere", "app.refine_range|Refine Range", "app.refine_chain|Refine Chain",
+            "app.refine_regularize_sphere|Regularize Sphere", "menu:refine-menu|More Refine Options|refine-1",
+            "tb:Refine/Regularize Control|Refinement Settings", "tb:Select Map for Fitting|Map for Refinement",
+            "menu:fixed-atoms-menu|Fixed Atoms|anchor",
+            "section:Side chains",
+            "tb:Auto-Fit Rotamer", "tb:Rotamers|Choose Rotamer", "tb:Edit Chi Angles",
+            "tb:Sidechain 180° Flip", "app.fill_partial_residues_action",
+            "section:Backbone",
+            "tb:Flip Peptide", "tb:Add Terminal Residue",
+            "section:Mutate",
+            "menu:mutate-protein-menu|Mutate & Auto-Fit|mutate-auto-fit", "tb:Simple Mutate",
+            "section:Move",
+            "app.rigid_body_fit_residue_range_action|Rigid-Body Fit Range",
+            "app.rigid_body_fit_chain_action|Rigid-Body Fit Chain",
+            "app.rotate_translate_residue_range|Rotate/Translate Range",
+            "app.rotate_translate_chain|Rotate/Translate Chain",
+            "section:Add",
+            "kb:Add Water Here", "tb:Add Alt Conf", "app.add_an_atom_action",
+            "section:Delete",
+            "app.delete_item_residue|Delete Residue", "app.delete_item_side_chain|Delete Side Chain",
+            "app.delete_item_atom|Delete Atom", "app.delete_item_water|Delete Water",
+            "app.delete_item_residue_range|Delete Residue Range", "menu:delete-item-menu|More Delete Options|delete",
+            "section:History",
+            "tb:Undo", "tb:Redo",
+            "special:classic-toolbar"}},
+      {"Ligands", "coot-plus-ligands-symbolic", "Find, fit and check ligands", {
+            "section:Get a ligand",
+            "app.get_monomer_action", "app.fetch_pdbe_ligand_description_action",
             "app.fetch_ligand_restraints_from_github_action", "app.import_cif_dictionary_action",
-            "app.unmodelled_blobs_action"}},
-      {"Validate", "Find what needs fixing", {
-            "app.show_validation_graphs_dialog", "app.ramachandran_plot_action",
-            "app.validation_outliers_action", "app.difference_map_peaks_action", "app.unmodelled_blobs_action",
-            "app.overlaps_peptides_cbeta_ramas_and_rotas_action", "app.pepflips_from_difference_map_action",
-            "app.check_delete_waters_action", "app.atoms_overlaps_action",
-            "app.all_atom_contact_dots_molprobity_action"}},
-      {"Save", "Write models, maps and pictures", {
-            "app.save_coordinates_action", "app.save_symmetry_coordinates_action", "app.save_state_action",
-            "app.screenshot_action", "app.file_export_map_action", "app.file_export_map_fragment_action"}}
+            "app.SMILES_to_3D_action",
+            "section:Fit",
+            "app.find_ligands_action", "app.unmodelled_blobs_action", "tb:Go to Next Ligand",
+            "app.jiggle_fit_active_residue_action",
+            "section:Check",
+            "app.geometric_distortions_for_ligand_action", "app.coot_contact_dots_for_ligand_action",
+            "app.flev_action",
+            "section:Build and compare",
+            "app.ligand_builder_action", "app.superpose_ligands_action"}},
+      {"Validate", "coot-plus-validate-symbolic", "Find what needs fixing", {
+            "section:Overview",
+            "app.show_validation_graphs_dialog|Validation Graphs", "app.validation_outliers_action",
+            "app.ramachandran_plot_action",
+            "app.overlaps_peptides_cbeta_ramas_and_rotas_action|All Outliers (List)",
+            "section:Density",
+            "app.difference_map_peaks_action", "app.unmodelled_blobs_action",
+            "app.pepflips_from_difference_map_action",
+            "section:Contacts and waters",
+            "app.atoms_overlaps_action", "app.all_atom_contact_dots_molprobity_action|Contact Dots",
+            "app.check_delete_waters_action"}},
+      {"Save", "coot-plus-save-symbolic", "Write models, maps and pictures", {
+            "section:Model",
+            "app.save_coordinates_action", "app.save_symmetry_coordinates_action",
+            "section:Maps",
+            "app.file_export_map_action", "app.file_export_map_fragment_action",
+            "section:Session and pictures",
+            "app.save_state_action", "app.screenshot_action"}}
    };
    return v;
 }
 
-const command_t *resolve_tool(const std::string &ref) {
+// split "ref|Label|icon"
+std::vector<std::string> split_bar(const std::string &s) {
+   std::vector<std::string> r;
+   size_t start = 0;
+   while (true) {
+      size_t p = s.find('|', start);
+      r.push_back(s.substr(start, p == std::string::npos ? std::string::npos : p - start));
+      if (p == std::string::npos) break;
+      start = p + 1;
+   }
+   return r;
+}
+
+const command_t *resolve_tool(const std::string &ref_in) {
+   std::string ref = split_bar(ref_in)[0];
    if (ref.rfind("kb:", 0) == 0)
       return find_command_by_label(ref.substr(3));
    if (ref.rfind("tb:", 0) == 0)
@@ -927,29 +1050,46 @@ const command_t *resolve_tool(const std::string &ref) {
 GtkWidget *symmetry_switch_sidebar   = nullptr;
 GtkWidget *symmetry_switch_inspector = nullptr;
 
-GtkWidget *make_tool_button(const command_t &c, const std::string &short_label = "", bool show_shortcut = true) {
+std::string tooltip_for(const command_t &c) {
+   std::string tip;
+   if (!c.description.empty()) tip = c.description + "\n";
+   tip += c.path.empty() ? c.label : c.path + " › " + c.label;
+   if (!c.shortcut.empty()) tip += "   —   key: " + c.shortcut;
+   return tip;
+}
 
-   GtkWidget *button = gtk_button_new();
-   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-   GtkWidget *l = gtk_label_new(short_label.empty() ? c.label.c_str() : short_label.c_str());
+GtkWidget *tool_button_content(const std::string &icon, const std::string &label, const std::string &shortcut) {
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+   GtkWidget *img = icon.empty() ? gtk_image_new() : gtk_image_new_from_icon_name(icon.c_str());
+   gtk_image_set_pixel_size(GTK_IMAGE(img), 16);
+   gtk_widget_set_size_request(img, 16, 16);
+   gtk_widget_add_css_class(img, "coot-plus-tool-icon");
+   gtk_box_append(GTK_BOX(box), img);
+   GtkWidget *l = gtk_label_new(label.c_str());
    gtk_label_set_xalign(GTK_LABEL(l), 0.0);
    gtk_label_set_ellipsize(GTK_LABEL(l), PANGO_ELLIPSIZE_END);
-   gtk_label_set_max_width_chars(GTK_LABEL(l), 20); // keep the sidebar narrow
+   gtk_label_set_max_width_chars(GTK_LABEL(l), 19);
    gtk_widget_set_hexpand(l, TRUE);
    gtk_box_append(GTK_BOX(box), l);
-   if (show_shortcut && !c.shortcut.empty()) {
-      std::string first_key = c.shortcut.substr(0, c.shortcut.find(','));
-      GtkWidget *sc = gtk_label_new(first_key.c_str());
-      gtk_widget_add_css_class(sc, "dim-label");
+   if (!shortcut.empty()) {
+      GtkWidget *sc = gtk_label_new(shortcut.c_str());
       gtk_widget_add_css_class(sc, "coot-plus-shortcut");
       gtk_box_append(GTK_BOX(box), sc);
    }
-   gtk_button_set_child(GTK_BUTTON(button), box);
+   return box;
+}
+
+GtkWidget *make_tool_button(const command_t &c, const std::string &short_label = "", bool show_shortcut = true) {
+
+   GtkWidget *button = gtk_button_new();
+   std::string first_key = c.shortcut.substr(0, c.shortcut.find(','));
+   gtk_button_set_child(GTK_BUTTON(button),
+                        tool_button_content(c.icon, short_label.empty() ? c.label : short_label,
+                                            show_shortcut ? first_key : std::string()));
    gtk_widget_add_css_class(button, "flat");
+   gtk_widget_add_css_class(button, "coot-plus-tool");
    gtk_widget_set_focusable(button, FALSE); // keep keyboard shortcuts going to the graphics
-   std::string tip = c.path.empty() ? c.label : c.path + " > " + c.label;
-   if (!c.shortcut.empty()) tip += "   (" + c.shortcut + ")";
-   gtk_widget_set_tooltip_text(button, tip.c_str());
+   gtk_widget_set_tooltip_text(button, tooltip_for(c).c_str());
 
    command_t *copy = new command_t(c);
    g_signal_connect_data(button, "clicked",
@@ -962,15 +1102,32 @@ GtkWidget *make_tool_button(const command_t &c, const std::string &short_label =
    return button;
 }
 
+GtkWidget *make_menu_tool_button(const std::string &menu_id, const std::string &label, const std::string &icon) {
+   GObject *o = graphics_info_t::get_gobject_from_builder(menu_id);
+   if (!o || !G_IS_MENU_MODEL(o)) return nullptr;
+   GtkWidget *mb = gtk_menu_button_new();
+   gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(mb), G_MENU_MODEL(o));
+   GtkWidget *content = tool_button_content(icon, label, "");
+   GtkWidget *arrow = gtk_label_new("▾");
+   gtk_widget_add_css_class(arrow, "coot-plus-menu-arrow");
+   gtk_box_append(GTK_BOX(content), arrow);
+   gtk_menu_button_set_child(GTK_MENU_BUTTON(mb), content);
+   gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(mb), FALSE);
+   gtk_widget_add_css_class(mb, "coot-plus-tool");
+   gtk_widget_set_focusable(mb, FALSE);
+   auto it = descriptions().find("menu:" + menu_id);
+   if (it != descriptions().end()) gtk_widget_set_tooltip_text(mb, it->second.c_str());
+   return mb;
+}
+
 GtkWidget *make_symmetry_switch_row(GtkWidget **switch_store) {
    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-   gtk_widget_set_margin_top(row, 4);
-   gtk_widget_set_margin_bottom(row, 4);
-   gtk_widget_set_margin_start(row, 6);
+   gtk_widget_add_css_class(row, "coot-plus-switch-row");
    GtkWidget *l = gtk_label_new("Show symmetry");
    gtk_label_set_xalign(GTK_LABEL(l), 0.0);
    gtk_widget_set_hexpand(l, TRUE);
-   gtk_widget_set_tooltip_text(row, "Show crystal neighbours as full atoms (master switch, every model, radius)");
+   gtk_widget_set_tooltip_text(row, "Show the crystal neighbours (symmetry copies) around the centre, as full atoms.\n"
+                                    "Turns on symmetry for every model and sets the radius to 40 Å if it was smaller.");
    GtkWidget *sw = gtk_switch_new();
    gtk_widget_set_focusable(sw, FALSE);
    gtk_widget_set_valign(sw, GTK_ALIGN_CENTER);
@@ -988,67 +1145,106 @@ GtkWidget *make_symmetry_switch_row(GtkWidget **switch_store) {
 
 GtkWidget *sidebar = nullptr;
 
+GtkWidget *section_label(const std::string &text) {
+   std::string t = text;
+   for (auto &ch : t) ch = std::toupper(static_cast<unsigned char>(ch));
+   GtkWidget *l = gtk_label_new(t.c_str());
+   gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   gtk_widget_add_css_class(l, "coot-plus-section");
+   return l;
+}
+
 GtkWidget *make_task_sidebar() {
 
    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_widget_add_css_class(outer, "coot-plus-sidebar");
-   gtk_widget_set_size_request(outer, 200, -1);
+   gtk_widget_set_size_request(outer, 210, -1);
 
    GtkWidget *stack = gtk_stack_new();
    gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
    gtk_stack_set_transition_duration(GTK_STACK(stack), 120);
+   gtk_stack_set_hhomogeneous(GTK_STACK(stack), FALSE);
 
    GtkWidget *task_list = gtk_list_box_new();
    gtk_list_box_set_selection_mode(GTK_LIST_BOX(task_list), GTK_SELECTION_BROWSE);
-   gtk_widget_add_css_class(task_list, "navigation-sidebar");
+   gtk_widget_add_css_class(task_list, "coot-plus-task-list");
    gtk_widget_set_focusable(task_list, FALSE);
 
    for (const auto &task : tasks()) {
 
+      GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+      GtkWidget *row_icon = gtk_image_new_from_icon_name(task.icon.c_str());
+      gtk_image_set_pixel_size(GTK_IMAGE(row_icon), 16);
       GtkWidget *row_label = gtk_label_new(task.name.c_str());
       gtk_label_set_xalign(GTK_LABEL(row_label), 0.0);
-      gtk_widget_set_margin_start(row_label, 6);
-      gtk_widget_set_tooltip_text(row_label, task.hint.c_str());
+      gtk_box_append(GTK_BOX(row_box), row_icon);
+      gtk_box_append(GTK_BOX(row_box), row_label);
       GtkWidget *row = gtk_list_box_row_new();
-      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_label);
+      gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
       gtk_widget_set_focusable(row, FALSE);
       gtk_widget_set_name(row, task.name.c_str());
+      gtk_widget_set_tooltip_text(row, task.hint.c_str());
       gtk_list_box_append(GTK_LIST_BOX(task_list), row);
 
       GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-      gtk_widget_set_margin_start(page, 4);
-      gtk_widget_set_margin_end(page, 4);
-      gtk_widget_set_margin_top(page, 6);
+      gtk_widget_add_css_class(page, "coot-plus-task-page");
+      GtkWidget *title = gtk_label_new(task.name.c_str());
+      gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+      gtk_widget_add_css_class(title, "coot-plus-page-title");
       GtkWidget *hint = gtk_label_new(task.hint.c_str());
       gtk_label_set_xalign(GTK_LABEL(hint), 0.0);
       gtk_label_set_wrap(GTK_LABEL(hint), TRUE);
       gtk_label_set_max_width_chars(GTK_LABEL(hint), 24);
-      gtk_widget_add_css_class(hint, "dim-label");
-      gtk_widget_add_css_class(hint, "caption");
-      gtk_widget_set_margin_start(hint, 6);
-      gtk_widget_set_margin_bottom(hint, 4);
+      gtk_widget_add_css_class(hint, "coot-plus-page-hint");
+      gtk_box_append(GTK_BOX(page), title);
       gtk_box_append(GTK_BOX(page), hint);
 
+      std::set<std::string> added; // the same command only once per page
       for (const auto &ref : task.tools) {
+         if (ref.rfind("section:", 0) == 0) {
+            gtk_box_append(GTK_BOX(page), section_label(ref.substr(8)));
+            continue;
+         }
          if (ref == "special:symmetry-toggle") {
             gtk_box_append(GTK_BOX(page), make_symmetry_switch_row(&symmetry_switch_sidebar));
             continue;
          }
          if (ref == "special:maps-hint") {
-            GtkWidget *l = gtk_label_new("Contour sliders are in the inspector →");
+            GtkWidget *l = gtk_label_new("Contour sliders for each map are in the inspector on the right.");
             gtk_label_set_xalign(GTK_LABEL(l), 0.0);
             gtk_label_set_wrap(GTK_LABEL(l), TRUE);
-            gtk_widget_add_css_class(l, "caption");
-            gtk_widget_set_margin_start(l, 6);
-            gtk_widget_set_margin_bottom(l, 4);
+            gtk_label_set_max_width_chars(GTK_LABEL(l), 24);
+            gtk_widget_add_css_class(l, "coot-plus-page-hint");
             gtk_box_append(GTK_BOX(page), l);
             continue;
          }
+         if (ref == "special:classic-toolbar") {
+            GtkWidget *b = gtk_button_new_with_label("Show the classic toolbar");
+            gtk_widget_add_css_class(b, "flat");
+            gtk_widget_add_css_class(b, "coot-plus-link");
+            gtk_widget_set_focusable(b, FALSE);
+            gtk_widget_set_tooltip_text(b, "Show Coot's original column of build buttons on the right as well");
+            g_signal_connect(b, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer) {
+                                set_classic_toolbar_visible(true); }), nullptr);
+            gtk_box_append(GTK_BOX(page), b);
+            continue;
+         }
+         std::vector<std::string> parts = split_bar(ref);
+         if (parts[0].rfind("menu:", 0) == 0) {
+            GtkWidget *mb = make_menu_tool_button(parts[0].substr(5), parts.size() > 1 ? parts[1] : "More",
+                                                  parts.size() > 2 ? parts[2] : "");
+            if (mb) gtk_box_append(GTK_BOX(page), mb);
+            continue;
+         }
          const command_t *c = resolve_tool(ref);
-         if (c)
-            gtk_box_append(GTK_BOX(page), make_tool_button(*c));
-         else
+         if (!c) {
             g_debug("coot-plus: task tool %s not found", ref.c_str());
+            continue;
+         }
+         std::string key = c->label + "|" + c->path + "|" + c->action + "|" + c->target;
+         if (added.count(key)) continue;
+         added.insert(key);
+         gtk_box_append(GTK_BOX(page), make_tool_button(*c, parts.size() > 1 ? parts[1] : ""));
       }
 
       GtkWidget *scrolled = gtk_scrolled_window_new();
@@ -1065,7 +1261,9 @@ GtkWidget *make_task_sidebar() {
    gtk_list_box_select_row(GTK_LIST_BOX(task_list), gtk_list_box_get_row_at_index(GTK_LIST_BOX(task_list), 0));
 
    gtk_box_append(GTK_BOX(outer), task_list);
-   gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+   GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+   gtk_widget_add_css_class(sep, "coot-plus-sidebar-sep");
+   gtk_box_append(GTK_BOX(outer), sep);
    gtk_widget_set_vexpand(stack, TRUE);
    gtk_box_append(GTK_BOX(outer), stack);
 
@@ -1191,6 +1389,7 @@ void rebuild_maps_section() {
       gtk_label_set_max_width_chars(GTK_LABEL(name_label), 24);
       gtk_widget_set_hexpand(name_label, TRUE);
       gtk_widget_set_tooltip_text(name_label, molecule_name(imol));
+      gtk_widget_add_css_class(name_label, "coot-plus-map-name");
       gtk_box_append(GTK_BOX(top), shown);
       gtk_box_append(GTK_BOX(top), name_label);
 
@@ -1203,8 +1402,7 @@ void rebuild_maps_section() {
 
       GtkWidget *readout = gtk_label_new("");
       gtk_label_set_xalign(GTK_LABEL(readout), 1.0);
-      gtk_widget_add_css_class(readout, "caption");
-      gtk_widget_add_css_class(readout, "numeric");
+      gtk_widget_add_css_class(readout, "coot-plus-readout");
 
       map_rows.push_back(map_row_t{imol, scale, readout, shown});
       update_map_readout(map_rows.back());
@@ -1300,66 +1498,81 @@ gboolean inspector_tick(gpointer) {
    return G_SOURCE_CONTINUE;
 }
 
+GtkWidget *make_card(GtkWidget *parent, const std::string &title) {
+   GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_add_css_class(card, "coot-plus-card");
+   gtk_box_append(GTK_BOX(card), section_label(title));
+   gtk_box_append(GTK_BOX(parent), card);
+   return card;
+}
+
+GtkWidget *small_label(const std::string &text) {
+   GtkWidget *l = gtk_label_new(text.c_str());
+   gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   return l;
+}
+
 GtkWidget *make_inspector() {
 
-   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
    gtk_widget_add_css_class(box, "coot-plus-inspector");
-   gtk_widget_set_margin_start(box, 10);
-   gtk_widget_set_margin_end(box, 10);
-   gtk_widget_set_margin_bottom(box, 10);
 
    // --- Selected
-   gtk_box_append(GTK_BOX(box), section_heading("Selected"));
+   GtkWidget *card = make_card(box, "Selected");
    sel_title_label = gtk_label_new("Nothing selected");
    gtk_label_set_xalign(GTK_LABEL(sel_title_label), 0.0);
-   gtk_widget_add_css_class(sel_title_label, "title-4");
-   gtk_label_set_selectable(GTK_LABEL(sel_title_label), FALSE);
+   gtk_widget_add_css_class(sel_title_label, "coot-plus-selected-title");
    sel_detail_label = gtk_label_new("");
    gtk_label_set_xalign(GTK_LABEL(sel_detail_label), 0.0);
    gtk_label_set_wrap(GTK_LABEL(sel_detail_label), TRUE);
    gtk_label_set_max_width_chars(GTK_LABEL(sel_detail_label), 30);
-   gtk_widget_add_css_class(sel_detail_label, "caption");
-   gtk_box_append(GTK_BOX(box), sel_title_label);
-   gtk_box_append(GTK_BOX(box), sel_detail_label);
+   gtk_widget_add_css_class(sel_detail_label, "coot-plus-dim");
+   gtk_box_append(GTK_BOX(card), sel_title_label);
+   gtk_box_append(GTK_BOX(card), sel_detail_label);
    {
-      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_box_set_homogeneous(GTK_BOX(row), TRUE);
       const std::vector<std::pair<std::string, std::string> > selected_tools = {
          {"app.residue_info_action", "Info"}, {"kb:Label/Unlabel Active Atom", "Label"}, {"kb:Sphere Refine", "Refine"}};
       for (const auto &t : selected_tools) {
          const command_t *c = resolve_tool(t.first);
          if (!c) continue;
-         GtkWidget *b = make_tool_button(*c, t.second, false);
-         gtk_widget_set_hexpand(b, TRUE);
-         gtk_widget_remove_css_class(b, "flat");
+         GtkWidget *b = gtk_button_new_with_label(t.second.c_str());
+         gtk_widget_add_css_class(b, "coot-plus-pill");
+         gtk_widget_set_focusable(b, FALSE);
+         gtk_widget_set_tooltip_text(b, tooltip_for(*c).c_str());
+         command_t *copy = new command_t(*c);
+         g_signal_connect_data(b, "clicked",
+                               G_CALLBACK(+[] (GtkButton *, gpointer data) { run_command(*static_cast<command_t *>(data)); }),
+                               copy, +[] (gpointer data, GClosure *) { delete static_cast<command_t *>(data); },
+                               GConnectFlags(0));
          gtk_box_append(GTK_BOX(row), b);
       }
-      gtk_box_append(GTK_BOX(box), row);
+      gtk_box_append(GTK_BOX(card), row);
    }
 
    // --- Maps
-   gtk_box_append(GTK_BOX(box), section_heading("Maps"));
+   card = make_card(box, "Maps");
    maps_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-   gtk_box_append(GTK_BOX(box), maps_box);
-   map_radius_label = gtk_label_new("Map radius");
-   gtk_label_set_xalign(GTK_LABEL(map_radius_label), 0.0);
-   gtk_widget_set_margin_top(map_radius_label, 6);
+   gtk_box_append(GTK_BOX(card), maps_box);
+   map_radius_label = small_label("Map radius");
+   gtk_widget_set_margin_top(map_radius_label, 4);
    map_radius_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 5.0, 60.0, 1.0);
    gtk_scale_set_draw_value(GTK_SCALE(map_radius_scale), FALSE);
    gtk_widget_set_focusable(map_radius_scale, FALSE);
-   gtk_widget_set_tooltip_text(map_radius_scale, "How far around the centre the maps are drawn ([ and ] keys)");
+   gtk_widget_set_tooltip_text(map_radius_scale, "How far around the centre the maps are drawn (keys [ and ])");
    g_signal_connect(map_radius_scale, "value-changed",
                     G_CALLBACK(+[] (GtkRange *range, gpointer) {
                        if (updating_widgets) return;
                        set_map_radius(gtk_range_get_value(range));
                     }), nullptr);
-   gtk_box_append(GTK_BOX(box), map_radius_label);
-   gtk_box_append(GTK_BOX(box), map_radius_scale);
+   gtk_box_append(GTK_BOX(card), map_radius_label);
+   gtk_box_append(GTK_BOX(card), map_radius_scale);
 
    // --- Symmetry
-   gtk_box_append(GTK_BOX(box), section_heading("Symmetry"));
-   gtk_box_append(GTK_BOX(box), make_symmetry_switch_row(&symmetry_switch_inspector));
-   symm_radius_label = gtk_label_new("Radius");
-   gtk_label_set_xalign(GTK_LABEL(symm_radius_label), 0.0);
+   card = make_card(box, "Symmetry");
+   gtk_box_append(GTK_BOX(card), make_symmetry_switch_row(&symmetry_switch_inspector));
+   symm_radius_label = small_label("Radius");
    symm_radius_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 5.0, 60.0, 1.0);
    gtk_scale_set_draw_value(GTK_SCALE(symm_radius_scale), FALSE);
    gtk_widget_set_focusable(symm_radius_scale, FALSE);
@@ -1370,45 +1583,48 @@ GtkWidget *make_inspector() {
                        set_symmetry_size(gtk_range_get_value(range));
                        graphics_draw();
                     }), nullptr);
-   gtk_box_append(GTK_BOX(box), symm_radius_label);
-   gtk_box_append(GTK_BOX(box), symm_radius_scale);
-   unit_cell_check = gtk_check_button_new_with_label("Unit cell");
+   gtk_box_append(GTK_BOX(card), symm_radius_label);
+   gtk_box_append(GTK_BOX(card), symm_radius_scale);
+   unit_cell_check = gtk_check_button_new_with_label("Show unit cell");
    gtk_widget_set_focusable(unit_cell_check, FALSE);
+   gtk_widget_set_tooltip_text(unit_cell_check, "Draw the unit cell box of every model");
    g_signal_connect(unit_cell_check, "toggled",
                     G_CALLBACK(+[] (GtkCheckButton *b, gpointer) {
                        if (updating_widgets) return;
                        set_show_unit_cells_all(gtk_check_button_get_active(b));
                     }), nullptr);
-   gtk_box_append(GTK_BOX(box), unit_cell_check);
+   gtk_box_append(GTK_BOX(card), unit_cell_check);
 
    // --- Labels
-   gtk_box_append(GTK_BOX(box), section_heading("Labels"));
+   card = make_card(box, "Labels");
    {
-      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-      label_size_label = gtk_label_new("Label size");
-      gtk_label_set_xalign(GTK_LABEL(label_size_label), 0.0);
+      GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      label_size_label = small_label("Label size");
       gtk_widget_set_hexpand(label_size_label, TRUE);
+      GtkWidget *steps = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+      gtk_widget_add_css_class(steps, "linked");
       GtkWidget *smaller = gtk_button_new_with_label("A−");
       GtkWidget *bigger  = gtk_button_new_with_label("A+");
-      gtk_widget_set_focusable(smaller, FALSE);
-      gtk_widget_set_focusable(bigger,  FALSE);
+      for (GtkWidget *b : {smaller, bigger}) {
+         gtk_widget_set_focusable(b, FALSE);
+         gtk_box_append(GTK_BOX(steps), b);
+      }
       gtk_widget_set_tooltip_text(smaller, "Smaller atom labels");
       gtk_widget_set_tooltip_text(bigger,  "Bigger atom labels");
       auto step = +[] (GtkButton *, gpointer d) { step_label_size(GPOINTER_TO_INT(d)); };
       g_signal_connect(smaller, "clicked", G_CALLBACK(step), GINT_TO_POINTER(-1));
       g_signal_connect(bigger,  "clicked", G_CALLBACK(step), GINT_TO_POINTER(+1));
       gtk_box_append(GTK_BOX(row), label_size_label);
-      gtk_box_append(GTK_BOX(row), smaller);
-      gtk_box_append(GTK_BOX(row), bigger);
-      gtk_box_append(GTK_BOX(box), row);
+      gtk_box_append(GTK_BOX(row), steps);
+      gtk_box_append(GTK_BOX(card), row);
       const command_t *c = resolve_tool("app.clear_atom_labels_action");
-      if (c) gtk_box_append(GTK_BOX(box), make_tool_button(*c));
+      if (c) gtk_box_append(GTK_BOX(card), make_tool_button(*c));
    }
 
    GtkWidget *scrolled = gtk_scrolled_window_new();
    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), box);
-   gtk_widget_set_size_request(scrolled, 250, -1);
+   gtk_widget_set_size_request(scrolled, 270, -1);
    gtk_widget_add_css_class(scrolled, "coot-plus-inspector-scroll");
 
    inspector = scrolled;
@@ -1418,30 +1634,151 @@ GtkWidget *make_inspector() {
 }
 
 // ------------------------------------------------------------------------------------
+//                                  header
+// ------------------------------------------------------------------------------------
 
-GtkWidget *make_panel_toggle(const char *label, const char *tooltip, GtkWidget *panel) {
-   GtkWidget *b = gtk_toggle_button_new_with_label(label);
+GtkWidget *icon_button(const char *icon, const char *tooltip) {
+   GtkWidget *b = gtk_button_new_from_icon_name(icon);
+   gtk_widget_add_css_class(b, "flat");
+   gtk_widget_add_css_class(b, "coot-plus-icon-button");
+   gtk_widget_set_focusable(b, FALSE);
+   gtk_widget_set_valign(b, GTK_ALIGN_CENTER);
+   gtk_widget_set_tooltip_text(b, tooltip);
+   return b;
+}
+
+GtkWidget *make_panel_toggle(const char *icon, const char *tooltip, GtkWidget *panel, const char *setting) {
+   GtkWidget *b = gtk_toggle_button_new();
+   gtk_button_set_icon_name(GTK_BUTTON(b), icon);
+   gtk_widget_add_css_class(b, "flat");
+   gtk_widget_add_css_class(b, "coot-plus-icon-button");
    gtk_widget_set_focusable(b, FALSE);
    gtk_widget_set_tooltip_text(b, tooltip);
    gtk_widget_set_valign(b, GTK_ALIGN_CENTER);
-   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), TRUE);
+   bool shown = load_coot_plus_setting_bool(setting, true);
+   gtk_widget_set_visible(panel, shown);
+   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), shown);
+   g_object_set_data(G_OBJECT(b), "setting", const_cast<char *>(setting));
    g_signal_connect(b, "toggled",
                     G_CALLBACK(+[] (GtkToggleButton *t, gpointer p) {
-                       gtk_widget_set_visible(GTK_WIDGET(p), gtk_toggle_button_get_active(t));
+                       bool on = gtk_toggle_button_get_active(t);
+                       gtk_widget_set_visible(GTK_WIDGET(p), on);
+                       save_coot_plus_setting_bool(static_cast<const char *>(g_object_get_data(G_OBJECT(t), "setting")), on);
                     }), panel);
+   // keep the button in step when the panel is shown/hidden another way (search commands)
+   g_signal_connect(panel, "notify::visible",
+                    G_CALLBACK(+[] (GObject *o, GParamSpec *, gpointer btn) {
+                       bool on = gtk_widget_get_visible(GTK_WIDGET(o));
+                       if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(btn)) != on)
+                          gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), on);
+                    }), b);
    return b;
+}
+
+void set_classic_toolbar_visible(bool state) {
+   if (!classic_toolbar) return;
+   gtk_widget_set_visible(classic_toolbar, state);
+   save_coot_plus_setting_bool("classic-toolbar", state);
+   graphics_info_t::add_status_bar_text(state ? "Classic build toolbar shown (hide it again from the search: \"classic\")"
+                                              : "Classic build toolbar hidden - its tools are in the Build task");
+}
+
+void apply_toolbar_tooltips() {
+   for (const auto &d : descriptions()) {
+      if (d.first.rfind("tb:", 0) != 0) continue;
+      GtkWidget *w = widget_from_builder(d.first.substr(3));
+      if (w) gtk_widget_set_tooltip_text(w, d.second.c_str());
+   }
 }
 
 void load_coot_plus_css() {
    const char *css =
-      ".coot-plus-sidebar { border-right: 1px solid alpha(currentColor, 0.15); }\n"
-      ".coot-plus-inspector-scroll { border-left: 1px solid alpha(currentColor, 0.15); }\n"
-      ".coot-plus-shortcut { font-family: monospace; font-size: smaller; }\n"
-      ".coot-plus-sidebar button { padding-top: 3px; padding-bottom: 3px; }\n";
+      // header
+      ".coot-plus-header { padding: 5px 8px; border-bottom: 1px solid alpha(currentColor, 0.10);"
+      "  background-color: alpha(currentColor, 0.035); }\n"
+      ".coot-plus-app-name { font-weight: 700; margin: 0 10px 0 4px; }\n"
+      ".coot-plus-search { min-height: 30px; border-radius: 8px; min-width: 360px; }\n"
+      ".coot-plus-icon-button { min-width: 28px; min-height: 28px; padding: 2px 6px; border-radius: 7px; }\n"
+      ".coot-plus-header .linked button { padding: 2px 10px; min-height: 26px; }\n"
+      ".coot-plus-header-sep { margin: 6px 6px; opacity: 0.4; }\n"
+      ".coot-plus-header checkbutton, .coot-plus-header button { margin: 0 1px; }\n"
+      // sidebar
+      ".coot-plus-sidebar { background-color: alpha(currentColor, 0.03); border-right: 1px solid alpha(currentColor, 0.10); }\n"
+      ".coot-plus-task-list { background: transparent; padding: 8px 6px 6px 6px; }\n"
+      ".coot-plus-task-list row { padding: 6px 10px; border-radius: 7px; margin: 1px 0; }\n"
+      ".coot-plus-task-list row:hover { background-color: alpha(currentColor, 0.07); }\n"
+      ".coot-plus-task-list row:selected { background-color: alpha(@theme_selected_bg_color, 0.85); color: @theme_selected_fg_color; }\n"
+      ".coot-plus-sidebar-sep { margin: 2px 12px; opacity: 0.5; }\n"
+      ".coot-plus-task-page { padding: 6px 6px 16px 6px; }\n"
+      ".coot-plus-page-title { font-weight: 700; font-size: 1.15em; margin: 4px 8px 0 8px; }\n"
+      ".coot-plus-page-hint { opacity: 0.6; font-size: 0.9em; margin: 0 8px 4px 8px; }\n"
+      ".coot-plus-section { font-size: 0.75em; font-weight: 700; letter-spacing: 1px; opacity: 0.5; margin: 12px 8px 3px 8px; }\n"
+      ".coot-plus-tool { padding: 4px 8px; border-radius: 6px; min-height: 24px; }\n"
+      ".coot-plus-tool:hover { background-color: alpha(currentColor, 0.08); }\n"
+      "menubutton.coot-plus-tool { padding: 0; min-height: 0; }\n"
+      "menubutton.coot-plus-tool > button { padding: 4px 8px; border-radius: 6px; min-height: 24px; }\n"
+      ".coot-plus-menu-arrow { opacity: 0.5; font-size: 0.8em; }\n"
+      ".coot-plus-tool-icon { opacity: 0.9; }\n"
+      ".coot-plus-shortcut { font-family: monospace; font-size: 0.8em; opacity: 0.55; padding: 0 5px;"
+      "  border: 1px solid alpha(currentColor, 0.25); border-radius: 4px; }\n"
+      ".coot-plus-link { font-size: 0.85em; opacity: 0.7; margin: 12px 4px 0 4px; }\n"
+      ".coot-plus-switch-row { padding: 4px 8px; }\n"
+      // inspector
+      ".coot-plus-inspector-scroll { border-left: 1px solid alpha(currentColor, 0.10); background-color: alpha(currentColor, 0.03); }\n"
+      ".coot-plus-inspector { padding: 10px; }\n"
+      ".coot-plus-card { background-color: alpha(currentColor, 0.05); border-radius: 10px; padding: 10px 12px 12px 12px; }\n"
+      ".coot-plus-card .coot-plus-section { margin: 0 0 2px 0; }\n"
+      ".coot-plus-selected-title { font-weight: 700; font-size: 1.2em; }\n"
+      ".coot-plus-dim { opacity: 0.65; font-size: 0.9em; }\n"
+      ".coot-plus-pill { border-radius: 7px; padding: 3px 6px; }\n"
+      ".coot-plus-map-name { font-weight: 600; }\n"
+      ".coot-plus-readout { font-size: 0.85em; opacity: 0.7; font-feature-settings: \"tnum\"; }\n"
+      // search results
+      ".coot-plus-results row { border-radius: 6px; }\n";
    GtkCssProvider *provider = gtk_css_provider_new();
    gtk_css_provider_load_from_string(provider, css);
    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider),
                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+}
+
+// icons for menu actions (Coot's own pixmaps)
+const std::map<std::string, std::string> &action_icons() {
+   static const std::map<std::string, std::string> m = {
+      {"app.auto_open_mtz_action", "map"},
+      {"app.open_map_action", "map"}, {"app.open_dataset_action", "map"},
+      {"app.show_accession_code_fetch_frame_oca", "connect-to-world"},
+      {"app.show_accession_code_fetch_frame_eds", "connect-to-world"},
+      {"app.show_accession_code_fetch_frame_pdb_redo", "connect-to-world"},
+      {"app.show_accession_code_fetch_frame_uniprot_id", "connect-to-world"},
+      {"app.fetch_pdbe_ligand_description_action", "connect-to-world"},
+      {"app.fetch_ligand_restraints_from_github_action", "connect-to-world"},
+      {"app.get_monomer_action", "go-to-ligand"}, {"app.go_to_atom_action", "go-to-atom"},
+      {"app.sequence_view_action", "sequence-view"}, {"app.map_parameters_action", "map"},
+      {"app.make_a_difference_map_action", "diff-map"}, {"app.draw_cell_and_symmetry_action", "cell+symm"},
+      {"app.undo_symmetry_view_action", "cell+symm"}, {"app.save_symmetry_coordinates_action", "cell+symm"},
+      {"app.refine_sphere", "refine-1"}, {"app.refine_range", "refine-1"}, {"app.refine_chain", "refine-1"},
+      {"app.refine_regularize_sphere", "regularize-1"}, {"app.fill_partial_residues_action", "auto-fit-rotamer"},
+      {"app.rigid_body_fit_residue_range_action", "rigid-body"}, {"app.rigid_body_fit_chain_action", "rigid-body"},
+      {"app.rotate_translate_residue_range", "rtz"}, {"app.rotate_translate_chain", "rtz"},
+      {"app.delete_item_residue", "delete"}, {"app.delete_item_side_chain", "delete"},
+      {"app.delete_item_atom", "delete"}, {"app.delete_item_water", "delete"},
+      {"app.delete_item_residue_range", "delete"}, {"app.find_ligands_action", "go-to-ligand"},
+      {"app.unmodelled_blobs_action", "unknown-blob"}, {"app.ligand_builder_action", "layla_6arom"},
+      {"app.SMILES_to_3D_action", "smiles"}, {"app.show_validation_graphs_dialog", "density-fit"},
+      {"app.difference_map_peaks_action", "diff-map"}, {"app.atoms_overlaps_action", "probe-clash"},
+      {"app.all_atom_contact_dots_molprobity_action", "probe-clash"}, {"app.check_delete_waters_action", "water-drop"},
+      {"app.residue_info_action", "residue-info"}, {"app.add_an_atom_action", "atom-at-pointer"},
+      {"app.environment_distances_action", "env-distances"}, {"app.pointer_distances_action", "pointer-distances"}};
+   return m;
+}
+
+// What each control does - written from the source, only where its behaviour was checked.
+// key: "app.action", "tb:builder-id", "kb:Key binding description", "menu:builder-menu-id"
+const std::map<std::string, std::string> &descriptions() {
+   static const std::map<std::string, std::string> m = {
+#include "coot-plus-descriptions.inc"
+   };
+   return m;
 }
 
 } // namespace
@@ -1465,12 +1802,21 @@ void coot_plus_setup_ui(GtkApplication *application) {
    GtkWidget *main_hbox     = widget_from_builder("main_window_hbox");
    GtkWidget *toolbar_outer = widget_from_builder("main_window_toolbar_hbox_outer");
    GtkWidget *toolbar_left  = widget_from_builder("main_window_toolbar_hbox");
+   GtkWidget *toolbar_end   = widget_from_builder("main_window_toolbar_hbox_end");
    GtkWidget *graphics      = widget_from_builder("main_window_graphics_overlay");
+   classic_toolbar          = widget_from_builder("main_window_vbox_inner");
    if (!main_hbox || !toolbar_outer || !toolbar_left || !graphics) {
       g_warning("coot-plus: main window widgets not found - task interface not added");
       return;
    }
 
+   apply_toolbar_tooltips();
+#ifndef HAVE_VTE
+   // without VTE (this macOS build) the AI-terminal button does nothing - hide it
+   if (GtkWidget *ai = widget_from_builder("claude_ai_button")) gtk_widget_set_visible(ai, FALSE);
+#endif
+
+   // --- panels
    GtkWidget *side = make_task_sidebar();
    sidebar_panel = side;
    gtk_box_prepend(GTK_BOX(main_hbox), side);
@@ -1478,16 +1824,59 @@ void coot_plus_setup_ui(GtkApplication *application) {
    GtkWidget *insp = make_inspector();
    inspector_panel = insp;
    gtk_box_insert_child_after(GTK_BOX(main_hbox), insp, graphics);
+   if (classic_toolbar)
+      gtk_widget_set_visible(classic_toolbar, load_coot_plus_setting_bool("classic-toolbar", false));
 
-   GtkWidget *search_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-   gtk_widget_set_hexpand(search_box, TRUE);
-   gtk_widget_set_halign(search_box, GTK_ALIGN_CENTER);
-   gtk_box_append(GTK_BOX(search_box), make_panel_toggle("Tasks", "Show/hide the task sidebar", side));
-   gtk_box_append(GTK_BOX(search_box), make_search_entry());
-   gtk_box_append(GTK_BOX(search_box), make_panel_toggle("Inspector", "Show/hide the inspector", insp));
+   // --- header: the old icon toolbar row is replaced; its buttons are in the Navigate task
+   gtk_widget_set_visible(toolbar_left, FALSE);
+   gtk_widget_add_css_class(toolbar_outer, "coot-plus-header");
+   if (toolbar_end) gtk_widget_remove_css_class(toolbar_end, "toolbar");
+   if (GtkWidget *w = widget_from_builder("add_module_menubutton"))
+      if (GTK_IS_MENU_BUTTON(w)) gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(w), FALSE);
+   if (GtkWidget *w = widget_from_builder("python_scripting_button"))
+      gtk_widget_add_css_class(w, "flat");
+   GtkWidget *expander = widget_from_builder("toolbar_expander");
+   if (expander) gtk_widget_set_visible(expander, FALSE);
+
+   GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+   gtk_widget_set_valign(left, GTK_ALIGN_CENTER);
+   gtk_box_append(GTK_BOX(left), make_panel_toggle("coot-plus-sidebar-symbolic", "Show/hide the task sidebar", side, "show-sidebar"));
+   GtkWidget *name = gtk_label_new("Coot+");
+   gtk_widget_add_css_class(name, "coot-plus-app-name");
+   gtk_box_append(GTK_BOX(left), name);
+
+   GtkWidget *center = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+   gtk_widget_set_hexpand(center, TRUE);
+   gtk_widget_set_halign(center, GTK_ALIGN_CENTER);
+   GtkWidget *entry = make_search_entry();
+   gtk_widget_add_css_class(entry, "coot-plus-search");
+   gtk_box_append(GTK_BOX(center), entry);
+
+   GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+   gtk_widget_set_valign(right, GTK_ALIGN_CENTER);
    graphics_info_t::scroll_wheel_zooms = load_coot_plus_setting_bool("scroll-wheel-zooms", false);
-   gtk_box_append(GTK_BOX(search_box), make_scroll_mode_switch());
-   gtk_box_insert_child_after(GTK_BOX(toolbar_outer), search_box, toolbar_left);
+   gtk_box_append(GTK_BOX(right), make_scroll_mode_switch());
+   gtk_box_append(GTK_BOX(right), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+   struct hb { const char *icon; const char *tip; const char *toolbar_id; };
+   for (const hb &h : {hb{"coot-plus-undo-symbolic", "Undo the last change to the model (Ctrl-Z)", "undo_button"},
+                       hb{"coot-plus-redo-symbolic", "Redo (Ctrl-Y)", "redo_button"},
+                       hb{"coot-plus-molecules-symbolic", "Display Manager: show/hide molecules and maps, change how they are drawn",
+                          "toolbar_display_manager_button"}}) {
+      GtkWidget *b = icon_button(h.icon, h.tip);
+      g_signal_connect(b, "clicked", G_CALLBACK(+[] (GtkButton *, gpointer id) {
+                          GtkWidget *w = widget_from_builder(static_cast<const char *>(id));
+                          if (w) g_signal_emit_by_name(w, "clicked");
+                       }), const_cast<char *>(h.toolbar_id));
+      gtk_box_append(GTK_BOX(right), b);
+   }
+   for (GtkWidget *w = gtk_widget_get_first_child(right); w; w = gtk_widget_get_next_sibling(w))
+      if (GTK_IS_SEPARATOR(w)) gtk_widget_add_css_class(w, "coot-plus-header-sep");
+
+   gtk_box_insert_child_after(GTK_BOX(toolbar_outer), left, toolbar_left);
+   gtk_box_insert_child_after(GTK_BOX(toolbar_outer), center, left);
+   gtk_box_insert_child_after(GTK_BOX(toolbar_outer), right, center);
+   GtkWidget *insp_toggle = make_panel_toggle("coot-plus-inspector-symbolic", "Show/hide the inspector", insp, "show-inspector");
+   gtk_box_append(GTK_BOX(toolbar_outer), insp_toggle);
 
    GtkWidget *window = graphics_info_t::get_main_window();
    if (window) add_command_search_shortcut(window);
