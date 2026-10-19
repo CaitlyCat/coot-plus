@@ -1706,9 +1706,6 @@ void populate_sidebar(GtkWidget *outer) {
 GtkWidget *inspector             = nullptr;
 GtkWidget *sel_title_label       = nullptr;
 GtkWidget *sel_detail_label      = nullptr;
-GtkWidget *maps_box              = nullptr;
-GtkWidget *map_radius_scale      = nullptr;
-GtkWidget *map_radius_label      = nullptr;
 GtkWidget *symm_radius_scale     = nullptr;
 GtkWidget *symm_radius_label     = nullptr;
 GtkWidget *unit_cell_check       = nullptr;
@@ -1716,13 +1713,111 @@ GtkWidget *label_size_label      = nullptr;
 std::string maps_signature;
 std::string selection_signature;
 
+std::string format_float(double v, int decimals);
+
+// A Blender-style number: drag on it (left/right or up/down) to change the value,
+// Shift for fine steps, click to type a value, Esc cancels typing.
+struct drag_number_t {
+   GtkWidget *stack = nullptr, *label = nullptr, *entry = nullptr;
+   double value = 0, lo = 0, hi = 1, per_pixel = 0.01, start = 0;
+   int decimals = 2;
+   std::string prefix, suffix;
+   bool moved = false;
+   std::function<void(double)> on_change;
+};
+
+void drag_number_show(drag_number_t *dn) {
+   gtk_label_set_text(GTK_LABEL(dn->label), (dn->prefix + format_float(dn->value, dn->decimals) + dn->suffix).c_str());
+}
+
+// set from outside (follow changes made elsewhere); does not call on_change
+void drag_number_set(drag_number_t *dn, double v) {
+   if (!dn) return;
+   if (gtk_stack_get_visible_child(GTK_STACK(dn->stack)) == dn->entry) return; // being typed in
+   if (std::abs(v - dn->value) < 1e-6) return;
+   dn->value = v;
+   drag_number_show(dn);
+}
+
+void drag_number_change(drag_number_t *dn, double v) {
+   v = std::max(dn->lo, std::min(dn->hi, v));
+   dn->value = v;
+   drag_number_show(dn);
+   if (dn->on_change) dn->on_change(v);
+}
+
+void drag_number_stop_typing(drag_number_t *dn, bool apply) {
+   if (gtk_stack_get_visible_child(GTK_STACK(dn->stack)) != dn->entry) return;
+   if (apply) {
+      std::string t = gtk_editable_get_text(GTK_EDITABLE(dn->entry));
+      char *end = nullptr;
+      double v = strtod(t.c_str(), &end);
+      if (end && end != t.c_str()) drag_number_change(dn, v);
+   }
+   gtk_stack_set_visible_child(GTK_STACK(dn->stack), dn->label);
+}
+
+GtkWidget *make_drag_number(drag_number_t *dn, const std::string &tooltip) {
+   dn->stack = gtk_stack_new();
+   gtk_widget_set_halign(dn->stack, GTK_ALIGN_START);
+   dn->label = gtk_label_new("");
+   gtk_widget_add_css_class(dn->label, "coot-plus-drag-number");
+   gtk_widget_set_cursor_from_name(dn->label, "ew-resize");
+   gtk_widget_set_tooltip_text(dn->label, (tooltip + "\nDrag left/right or up/down to change it (Shift: fine). "
+                                                   "Click to type a value.").c_str());
+   dn->entry = gtk_entry_new();
+   gtk_editable_set_width_chars(GTK_EDITABLE(dn->entry), 6);
+   gtk_widget_add_css_class(dn->entry, "coot-plus-drag-entry");
+   gtk_stack_add_child(GTK_STACK(dn->stack), dn->label);
+   gtk_stack_add_child(GTK_STACK(dn->stack), dn->entry);
+   gtk_stack_set_visible_child(GTK_STACK(dn->stack), dn->label);
+   drag_number_show(dn);
+   g_object_set_data_full(G_OBJECT(dn->stack), "coot-plus-drag-number", dn,
+                          +[] (gpointer d) { delete static_cast<drag_number_t *>(d); });
+
+   GtkGesture *drag = gtk_gesture_drag_new();
+   g_signal_connect(drag, "drag-begin", G_CALLBACK(+[] (GtkGestureDrag *, double, double, gpointer d) {
+                       auto *dn = static_cast<drag_number_t *>(d); dn->start = dn->value; dn->moved = false; }), dn);
+   g_signal_connect(drag, "drag-update", G_CALLBACK(+[] (GtkGestureDrag *g, double dx, double dy, gpointer d) {
+                       auto *dn = static_cast<drag_number_t *>(d);
+                       double px = std::abs(dx) > std::abs(dy) ? dx : -dy;   // right or up = more
+                       if (!dn->moved && std::abs(px) < 3) return;
+                       dn->moved = true;
+                       GdkModifierType st = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+                       double rate = dn->per_pixel * ((st & GDK_SHIFT_MASK) ? 0.1 : 1.0);
+                       drag_number_change(dn, dn->start + px * rate); }), dn);
+   g_signal_connect(drag, "drag-end", G_CALLBACK(+[] (GtkGestureDrag *, double, double, gpointer d) {
+                       auto *dn = static_cast<drag_number_t *>(d);
+                       if (dn->moved) return;
+                       gtk_editable_set_text(GTK_EDITABLE(dn->entry), format_float(dn->value, dn->decimals).c_str());
+                       gtk_stack_set_visible_child(GTK_STACK(dn->stack), dn->entry);
+                       gtk_widget_grab_focus(dn->entry);
+                       gtk_editable_select_region(GTK_EDITABLE(dn->entry), 0, -1); }), dn);
+   gtk_widget_add_controller(dn->label, GTK_EVENT_CONTROLLER(drag));
+
+   g_signal_connect(dn->entry, "activate", G_CALLBACK(+[] (GtkEntry *, gpointer d) {
+                       drag_number_stop_typing(static_cast<drag_number_t *>(d), true); }), dn);
+   GtkEventController *focus = gtk_event_controller_focus_new();
+   g_signal_connect(focus, "leave", G_CALLBACK(+[] (GtkEventControllerFocus *, gpointer d) {
+                       drag_number_stop_typing(static_cast<drag_number_t *>(d), true); }), dn);
+   gtk_widget_add_controller(dn->entry, focus);
+   GtkEventController *keys = gtk_event_controller_key_new();
+   g_signal_connect(keys, "key-pressed", G_CALLBACK(+[] (GtkEventControllerKey *, guint kv, guint, GdkModifierType, gpointer d) -> gboolean {
+                       if (kv != GDK_KEY_Escape) return FALSE;
+                       drag_number_stop_typing(static_cast<drag_number_t *>(d), false); return TRUE; }), dn);
+   gtk_widget_add_controller(dn->entry, keys);
+   return dn->stack;
+}
+
+// contour and opacity numbers on each map row of the Molecules list
 struct map_row_t {
    int imol;
-   GtkWidget *scale;
-   GtkWidget *readout;
-   GtkWidget *shown;
+   drag_number_t *contour;
+   drag_number_t *opacity;
+   GtkWidget *absolute;
 };
 std::vector<map_row_t> map_rows;
+drag_number_t *map_radius_number = nullptr;
 
 GtkWidget *section_heading(const std::string &text) {
    GtkWidget *l = gtk_label_new(text.c_str());
@@ -1785,117 +1880,23 @@ void update_selection_section() {
 }
 
 void update_map_readout(const map_row_t &r) {
-   float s = get_contour_level_in_sigma(r.imol);
    float a = get_contour_level_absolute(r.imol);
-   bool diff = map_is_difference_map(r.imol);
-   std::string t = (diff ? "±" : "") + format_float(s, 2) + " σ   " + format_float(a, 3) + " e/Å³";
-   gtk_label_set_text(GTK_LABEL(r.readout), t.c_str());
+   gtk_label_set_text(GTK_LABEL(r.absolute), (format_float(a, 3) + " e/Å³").c_str());
 }
 
-void rebuild_maps_section() {
-
-   GtkWidget *child;
-   while ((child = gtk_widget_get_first_child(maps_box)) != nullptr)
-      gtk_box_remove(GTK_BOX(maps_box), child);
-   map_rows.clear();
-
-   int n_maps = 0;
-   for (int imol=0; imol<graphics_n_molecules(); imol++) {
-      if (!is_valid_map_molecule(imol)) continue;
-      n_maps++;
-      bool diff = map_is_difference_map(imol);
-
-      GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-      GtkWidget *shown = gtk_check_button_new();
-      gtk_widget_set_focusable(shown, FALSE);
-      gtk_check_button_set_active(GTK_CHECK_BUTTON(shown), map_is_displayed(imol));
-      gtk_widget_set_tooltip_text(shown, "Show/hide this map");
-      std::string name = display_name(imol);
-      GtkWidget *name_label = gtk_label_new(((diff ? "Δ " : "") + name + "  ·  " +
-                                             file_basename(graphics_info_t::molecules[imol].save_mtz_file_name.empty()
-                                                           ? molecule_name(imol)
-                                                           : graphics_info_t::molecules[imol].save_mtz_file_name)).c_str());
-      gtk_label_set_xalign(GTK_LABEL(name_label), 0.0);
-      gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_MIDDLE);
-      gtk_label_set_max_width_chars(GTK_LABEL(name_label), 24);
-      gtk_widget_set_hexpand(name_label, TRUE);
-      gtk_widget_set_tooltip_text(name_label, molecule_name(imol));
-      gtk_widget_add_css_class(name_label, "coot-plus-map-name");
-      gtk_box_append(GTK_BOX(top), shown);
-      gtk_box_append(GTK_BOX(top), name_label);
-
-      double lo = diff ? 1.0 : 0.1, hi = diff ? 8.0 : 5.0;
-      GtkWidget *scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, lo, hi, 0.05);
-      gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
-      gtk_widget_set_focusable(scale, FALSE);
-      gtk_range_set_value(GTK_RANGE(scale), get_contour_level_in_sigma(imol));
-      gtk_widget_set_tooltip_text(scale, "Contour level in σ (same scale for every map)");
-
-      GtkWidget *readout = gtk_label_new("");
-      gtk_label_set_xalign(GTK_LABEL(readout), 1.0);
-      gtk_widget_add_css_class(readout, "coot-plus-readout");
-
-      map_rows.push_back(map_row_t{imol, scale, readout, shown});
-      update_map_readout(map_rows.back());
-
-      g_signal_connect(scale, "value-changed",
-                       G_CALLBACK(+[] (GtkRange *range, gpointer data) {
-                          if (updating_widgets) return;
-                          int imol = GPOINTER_TO_INT(data);
-                          set_contour_level_in_sigma(imol, gtk_range_get_value(range));
-                          for (const auto &r : map_rows) if (r.imol == imol) update_map_readout(r);
-                          graphics_draw();
-                       }), GINT_TO_POINTER(imol));
-      g_signal_connect(shown, "toggled",
-                       G_CALLBACK(+[] (GtkCheckButton *b, gpointer data) {
-                          if (updating_widgets) return;
-                          set_map_displayed(GPOINTER_TO_INT(data), gtk_check_button_get_active(b));
-                       }), GINT_TO_POINTER(imol));
-
-      gtk_box_append(GTK_BOX(maps_box), top);
-      gtk_box_append(GTK_BOX(maps_box), scale);
-      gtk_box_append(GTK_BOX(maps_box), readout);
-   }
-   if (n_maps == 0) {
-      GtkWidget *l = gtk_label_new("No maps open\n(Load > Auto Open MTZ)");
-      gtk_label_set_xalign(GTK_LABEL(l), 0.0);
-      gtk_widget_add_css_class(l, "dim-label");
-      gtk_box_append(GTK_BOX(maps_box), l);
-   }
-}
-
+// follow changes made elsewhere (scroll wheel, +/- keys, Map Parameters dialog)
 void update_maps_section() {
-   std::string sig;
-   for (int imol=0; imol<graphics_n_molecules(); imol++)
-      if (is_valid_map_molecule(imol))
-         sig += std::to_string(imol) + ":" + molecule_name(imol) + ":" + std::to_string(map_is_difference_map(imol)) + ":" + display_name(imol) + ";";
-   if (sig != maps_signature) {
-      maps_signature = sig;
-      updating_widgets = true;
-      rebuild_maps_section();
-      updating_widgets = false;
-      return;
-   }
-   // follow changes made elsewhere (scroll wheel, +/- keys, Map Parameters dialog)
-   updating_widgets = true;
    for (const auto &r : map_rows) {
-      double s = get_contour_level_in_sigma(r.imol);
-      if (std::abs(gtk_range_get_value(GTK_RANGE(r.scale)) - s) > 0.001)
-         gtk_range_set_value(GTK_RANGE(r.scale), s);
+      if (!is_valid_map_molecule(r.imol)) continue;
+      drag_number_set(r.contour, get_contour_level_in_sigma(r.imol));
+      drag_number_set(r.opacity, 100.0 * get_solid_density_surface_opacity(r.imol));
       update_map_readout(r);
-      bool d = map_is_displayed(r.imol);
-      if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r.shown)) != d)
-         gtk_check_button_set_active(GTK_CHECK_BUTTON(r.shown), d);
    }
-   updating_widgets = false;
 }
 
 void update_misc_section() {
    updating_widgets = true;
-   double mr = get_map_radius();
-   if (std::abs(gtk_range_get_value(GTK_RANGE(map_radius_scale)) - mr) > 0.01)
-      gtk_range_set_value(GTK_RANGE(map_radius_scale), mr);
-   gtk_label_set_text(GTK_LABEL(map_radius_label), ("Map radius  " + format_float(mr, 0) + " Å").c_str());
+   drag_number_set(map_radius_number, get_map_radius());
 
    bool symm = symmetry_is_on();
    for (GtkWidget *sw : {symmetry_switch_sidebar, symmetry_switch_inspector})
@@ -2470,10 +2471,41 @@ GtkWidget *make_molecule_row(int imol, int ref_model, const std::vector<float> &
       gtk_box_append(GTK_BOX(text), w);
    }
    // double-click the name: label it
-   GtkGesture *dbl = gtk_gesture_click_new();
-   g_signal_connect(dbl, "pressed", G_CALLBACK(+[] (GtkGestureClick *, int n_press, double, double, gpointer d) {
-                       if (n_press == 2) ask_rename_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
-   gtk_widget_add_controller(text, GTK_EVENT_CONTROLLER(dbl));
+   for (GtkWidget *w : {name_label, info_label}) {
+      GtkGesture *dbl = gtk_gesture_click_new();
+      g_signal_connect(dbl, "pressed", G_CALLBACK(+[] (GtkGestureClick *, int n_press, double, double, gpointer d) {
+                          if (n_press == 2) ask_rename_molecule(GPOINTER_TO_INT(d)); }), GINT_TO_POINTER(imol));
+      gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(dbl));
+   }
+
+   if (!model) {
+      // contour level and opacity, right on the map's row
+      GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_widget_set_margin_top(controls, 3);
+      auto *contour = new drag_number_t;
+      contour->value = get_contour_level_in_sigma(imol);
+      contour->lo = diff ? 0.5 : 0.1; contour->hi = diff ? 10.0 : 6.0;
+      contour->per_pixel = 0.01; contour->decimals = 2;
+      contour->prefix = diff ? "±" : ""; contour->suffix = " σ";
+      contour->on_change = [imol] (double v) {
+         set_contour_level_in_sigma(imol, v);
+         for (const auto &r : map_rows) if (r.imol == imol) update_map_readout(r);
+         graphics_draw(); };
+      auto *opacity = new drag_number_t;
+      opacity->value = 100.0 * get_solid_density_surface_opacity(imol);
+      opacity->lo = 0; opacity->hi = 100; opacity->per_pixel = 0.5; opacity->decimals = 0; opacity->suffix = " %";
+      opacity->on_change = [imol] (double v) { set_solid_density_surface_opacity(imol, v / 100.0); };
+      GtkWidget *absolute = gtk_label_new("");
+      gtk_widget_add_css_class(absolute, "coot-plus-readout");
+      gtk_widget_set_hexpand(absolute, TRUE);
+      gtk_label_set_xalign(GTK_LABEL(absolute), 0.0);
+      gtk_box_append(GTK_BOX(controls), make_drag_number(contour, "Contour level in σ (same scale for every map)"));
+      gtk_box_append(GTK_BOX(controls), absolute);
+      gtk_box_append(GTK_BOX(controls), make_drag_number(opacity, "Opacity: 100 % is solid, lower lets you see through the map"));
+      gtk_box_append(GTK_BOX(text), controls);
+      map_rows.push_back(map_row_t{imol, contour, opacity, absolute});
+      update_map_readout(map_rows.back());
+   }
 
    GtkWidget *close = gtk_button_new_with_label("✕");
    gtk_widget_add_css_class(close, "flat");
@@ -2504,6 +2536,8 @@ void rebuild_molecules_section() {
    while ((child = gtk_widget_get_first_child(molecules_box)) != nullptr)
       gtk_box_remove(GTK_BOX(molecules_box), child);
    molecule_rows.clear();
+   map_rows.clear();
+   map_radius_number = nullptr;
 
    // the model maps are compared with: the first displayed model with a cell
    int ref_model = -1;
@@ -2523,6 +2557,19 @@ void rebuild_molecules_section() {
    if (!maps.empty()) {
       gtk_box_append(GTK_BOX(molecules_box), molecule_section_heading(maps.size() == 1 ? "Map" : "Maps"));
       for (int imol : maps) gtk_box_append(GTK_BOX(molecules_box), make_molecule_row(imol, ref_model, ref_cell));
+      GtkWidget *radius_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_widget_set_margin_start(radius_row, 4);
+      GtkWidget *rl = gtk_label_new("Map radius");
+      gtk_widget_add_css_class(rl, "coot-plus-dim");
+      map_radius_number = new drag_number_t;
+      map_radius_number->value = get_map_radius();
+      map_radius_number->lo = 5; map_radius_number->hi = 60; map_radius_number->per_pixel = 0.2;
+      map_radius_number->decimals = 0; map_radius_number->suffix = " Å";
+      map_radius_number->on_change = [] (double v) { set_map_radius(v); };
+      gtk_box_append(GTK_BOX(radius_row), rl);
+      gtk_box_append(GTK_BOX(radius_row), make_drag_number(map_radius_number,
+                     "How far around the centre the maps are drawn (keys [ and ])"));
+      gtk_box_append(GTK_BOX(molecules_box), radius_row);
    }
 
    if (models.empty() && maps.empty()) {
@@ -5615,24 +5662,6 @@ GtkWidget *make_inspector() {
    // --- Ligand (only when centred on one)
    make_ligand_card(box);
 
-   // --- Maps
-   card = make_card(box, "Maps");
-   maps_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-   gtk_box_append(GTK_BOX(card), maps_box);
-   map_radius_label = small_label("Map radius");
-   gtk_widget_set_margin_top(map_radius_label, 4);
-   map_radius_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 5.0, 60.0, 1.0);
-   gtk_scale_set_draw_value(GTK_SCALE(map_radius_scale), FALSE);
-   gtk_widget_set_focusable(map_radius_scale, FALSE);
-   gtk_widget_set_tooltip_text(map_radius_scale, "How far around the centre the maps are drawn (keys [ and ])");
-   g_signal_connect(map_radius_scale, "value-changed",
-                    G_CALLBACK(+[] (GtkRange *range, gpointer) {
-                       if (updating_widgets) return;
-                       set_map_radius(gtk_range_get_value(range));
-                    }), nullptr);
-   gtk_box_append(GTK_BOX(card), map_radius_label);
-   gtk_box_append(GTK_BOX(card), map_radius_scale);
-
    // --- Symmetry
    card = make_card(box, "Symmetry");
    gtk_box_append(GTK_BOX(card), make_symmetry_switch_row(&symmetry_switch_inspector));
@@ -5693,7 +5722,6 @@ GtkWidget *make_inspector() {
 
    inspector = scrolled;
    g_timeout_add(500, +[] (gpointer) -> gboolean { track_view_changes(); return G_SOURCE_CONTINUE; }, nullptr);
-   rebuild_maps_section();
    update_molecules_section();
    g_timeout_add(400, inspector_tick, nullptr);
    return scrolled;
@@ -5799,6 +5827,10 @@ void load_coot_plus_css() {
       ".coot-plus-pill { border-radius: 7px; padding: 3px 6px; }\n"
       ".coot-plus-map-name { font-weight: 600; }\n"
       ".coot-plus-readout { font-size: 0.85em; opacity: 0.7; font-feature-settings: \"tnum\"; }\n"
+      ".coot-plus-drag-number { font-feature-settings: \"tnum\"; padding: 1px 7px; border-radius: 5px; "
+      "background: alpha(currentColor, 0.08); }\n"
+      ".coot-plus-drag-number:hover { background: alpha(currentColor, 0.16); }\n"
+      ".coot-plus-drag-entry { min-height: 0; padding: 0 4px; }\n"
       ".coot-plus-molecule-row { padding: 3px 0; }\n"
       ".coot-plus-warning { color: #f0b429; font-size: 0.85em; }\n"
       ".coot-plus-close { min-width: 24px; min-height: 24px; padding: 0 6px; opacity: 0.8; border-radius: 6px; font-size: 1.05em; }\n"
