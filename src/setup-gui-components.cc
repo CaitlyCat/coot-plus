@@ -391,16 +391,122 @@ on_python_scripting_entry_key_released(GtkEventControllerKey *controller,
 // it doesn't include gtk stuff (for now).
 void add_python_scripting_entry_completion(GtkWidget *entry);
 
+// Coot+: run a command typed in the Python scripting entry the way the Python REPL
+// does (Py_single_input: expression values are echoed via sys.displayhook), capture
+// what it prints, and report the output or the error in the status bar - previously
+// PyRun_SimpleString() was used and everything (including errors) went to the
+// terminal only, which a Mac user launching the app never sees.
+//
+// Returns true on success. On failure, message is the error with a hint.
+static bool run_python_console_command(const std::string &cmd, std::string &output, std::string &message) {
+
+   PyObject *main_module = PyImport_AddModule("__main__"); // borrowed
+   if (!main_module) { message = "Python: no __main__ module"; return false; }
+   PyObject *globals = PyModule_GetDict(main_module); // borrowed
+
+   // capture stdout
+   PyObject *io_module = PyImport_ImportModule("io");
+   PyObject *capture = io_module ? PyObject_CallMethod(io_module, "StringIO", NULL) : nullptr;
+   Py_XDECREF(io_module);
+   PyObject *saved_stdout = PySys_GetObject("stdout"); // borrowed
+   Py_XINCREF(saved_stdout);
+   if (capture) PySys_SetObject("stdout", capture);
+
+   PyObject *result = PyRun_String(cmd.c_str(), Py_single_input, globals, globals);
+   bool ok = (result != nullptr);
+   Py_XDECREF(result);
+
+   if (!ok) {
+      if (PyErr_ExceptionMatches(PyExc_SystemExit)) {
+         PyErr_Clear();
+         message = "exit() is not available here - use File > Exit";
+      } else {
+         PyObject *ptype, *pvalue, *ptraceback;
+         PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+         PyErr_NormalizeException(&ptype, &pvalue, &ptraceback);
+         std::string type_name = ptype ? reinterpret_cast<PyTypeObject *>(ptype)->tp_name : "Error";
+         std::string value_str;
+         if (pvalue) {
+            PyObject *str_obj = PyObject_Str(pvalue);
+            if (str_obj) {
+               const char *c = PyUnicode_AsUTF8(str_obj);
+               if (c) value_str = c;
+               Py_DECREF(str_obj);
+            }
+         }
+         message = type_name + (value_str.empty() ? "" : ": " + value_str);
+
+         // hint: a coot function used without its module prefix
+         if (pvalue && PyErr_GivenExceptionMatches(ptype, PyExc_NameError)) {
+            PyObject *name_obj = PyObject_GetAttrString(pvalue, "name");
+            if (name_obj && PyUnicode_Check(name_obj)) {
+               const char *name = PyUnicode_AsUTF8(name_obj);
+               for (const char *mod_name : {"coot", "coot_utils", "coot_gui"}) {
+                  PyObject *mod = PyDict_GetItemString(PySys_GetObject("modules"), mod_name); // borrowed
+                  if (name && mod && PyObject_HasAttrString(mod, name)) {
+                     message += std::string(" - did you mean ") + mod_name + "." + name + "?";
+                     break;
+                  }
+               }
+            }
+            Py_XDECREF(name_obj);
+            PyErr_Clear();
+         }
+         // full traceback to the terminal/log as before
+         PyErr_Restore(ptype, pvalue, ptraceback);
+         PyErr_Print();
+      }
+   }
+
+   if (capture) {
+      PyObject *val = PyObject_CallMethod(capture, "getvalue", NULL);
+      if (val) {
+         const char *c = PyUnicode_AsUTF8(val);
+         if (c) output = c;
+         Py_DECREF(val);
+      }
+      PySys_SetObject("stdout", saved_stdout);
+      Py_DECREF(capture);
+   }
+   Py_XDECREF(saved_stdout);
+   PyErr_Clear();
+
+   if (!output.empty())
+      std::cout << output << std::flush; // keep the terminal transcript too
+   return ok;
+}
+
+// one line for the status bar
+static std::string console_status_text(const std::string &s) {
+   std::string t = s;
+   while (!t.empty() && (t.back() == '\n' || t.back() == ' ')) t.pop_back();
+   for (auto &c : t) if (c == '\n') c = ' ';
+   if (t.length() > 300) t = t.substr(0, 297) + "...";
+   return t;
+}
+
 void on_python_scripting_entry_activated(GtkEntry* entry, gpointer user_data) {
 
-   const char *entry_txt = gtk_editable_get_text(GTK_EDITABLE(entry));
-   g_info("Running python command: '%s'",entry_txt);
-   PyRun_SimpleString(entry_txt);
+   std::string cmd = gtk_editable_get_text(GTK_EDITABLE(entry));
+   if (cmd.empty()) return;
+   g_info("Running python command: '%s'", cmd.c_str());
+
+   std::string output, error_message;
+   bool ok = run_python_console_command(cmd, output, error_message);
 
    // add a copy of the text to history
-   graphics_info_t::command_history.add_to_history(std::string(entry_txt));
-   // clear the entry
-   gtk_editable_set_text(GTK_EDITABLE(entry), "");
+   graphics_info_t::command_history.add_to_history(cmd);
+
+   if (ok) {
+      if (!output.empty())
+         graphics_info_t::add_status_bar_text(console_status_text("Python: " + output));
+      // clear the entry
+      gtk_editable_set_text(GTK_EDITABLE(entry), "");
+   } else {
+      graphics_info_t::add_status_bar_text(console_status_text("Python error: " + error_message));
+      // keep the command so that it can be corrected
+      gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
+   }
 }
 
 void setup_python_scripting_entry() {
