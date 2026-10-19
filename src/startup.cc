@@ -58,6 +58,7 @@
 #include "utils/logging.hh"
 #include "widget-from-builder.hh"
 #include "utils/setup-syminfo.hh"
+#include "coot-plus-ui.hh"
 
 // Coot+: set in startup(), used to show no_symmetry_warning_dialog once the GUI is up
 static bool symmetry_library_found = true;
@@ -1395,6 +1396,7 @@ startup_application_activate(GtkApplication *application,
 
       setup_gui_components();
       setup_go_to_residue_keyboarding_mode_entry_signals();
+      coot_plus_setup_ui(application); // Coot+: task sidebar, inspector, command search
 
       handle_start_scripts(); // what used to be in ~/.coot/*.py.
                               // 20260124-PE Not to self: these are not

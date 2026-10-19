@@ -358,7 +358,8 @@ WinCoot_SOURCES = main.cc glade-callbacks.cc glade-callbacks-main-window.cc \
         setup-gui-components.hh \
 	vte.cc vte.hh \
 	create-menu-item-actions.cc \
-	create-menu-item-actions.hh
+	create-menu-item-actions.hh \
+	coot-plus-ui.cc coot-plus-ui.hh
 else
 if OS_DARWIN
 MacCoot_SOURCES = main.cc glade-callbacks.cc glade-callbacks-main-window.cc \
@@ -368,7 +369,8 @@ MacCoot_SOURCES = main.cc glade-callbacks.cc glade-callbacks-main-window.cc \
         setup-gui-components.hh \
 	vte.cc vte.hh \
 	create-menu-item-actions.cc \
-	create-menu-item-actions.hh
+	create-menu-item-actions.hh \
+	coot-plus-ui.cc coot-plus-ui.hh
 
 else
 coot_1_SOURCES = main.cc glade-callbacks.cc glade-callbacks-main-window.cc \
@@ -378,7 +380,8 @@ coot_1_SOURCES = main.cc glade-callbacks.cc glade-callbacks-main-window.cc \
         setup-gui-components.hh \
 	vte.cc vte.hh \
 	create-menu-item-actions.cc \
-	create-menu-item-actions.hh
+	create-menu-item-actions.hh \
+	coot-plus-ui.cc coot-plus-ui.hh
 endif
 endif
 
