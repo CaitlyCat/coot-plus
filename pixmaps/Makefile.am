@@ -107,3 +107,20 @@ endif
 # This is done by the Makefile in icons now.
 # dist_icons_DATA = coot.png
 # iconsdir = ${datarootdir}/icons/hicolor/48x48/apps
+
+# Coot+ interface icons (symbolic: recoloured to the theme)
+dist_cootpixmap_DATA += \
+	coot-plus-build-symbolic.svg \
+	coot-plus-inspector-symbolic.svg \
+	coot-plus-ligands-symbolic.svg \
+	coot-plus-load-symbolic.svg \
+	coot-plus-maps-symbolic.svg \
+	coot-plus-molecules-symbolic.svg \
+	coot-plus-more-symbolic.svg \
+	coot-plus-navigate-symbolic.svg \
+	coot-plus-redo-symbolic.svg \
+	coot-plus-save-symbolic.svg \
+	coot-plus-sidebar-symbolic.svg \
+	coot-plus-symmetry-symbolic.svg \
+	coot-plus-undo-symbolic.svg \
+	coot-plus-validate-symbolic.svg
