@@ -6088,6 +6088,13 @@ void coot_plus_setup_ui(GtkApplication *application) {
    gtk_box_append(GTK_BOX(left), make_panel_toggle("coot-plus-sidebar-symbolic", "Show/hide the task sidebar", side, "show-sidebar"));
    GtkWidget *name = gtk_label_new("Coot+");
    gtk_widget_add_css_class(name, "coot-plus-app-name");
+   {
+      // "Coot+ 1.2 | 1.3.4": Coot+ version | the Coot release underneath (set by the app's launcher)
+      const char *v = getenv("COOT_PLUS_VERSION");
+      std::string tip = v ? std::string("Coot+ ") + v + "\n(Coot+ version | the Coot release it is built on)"
+                          : std::string("Coot+ development build (Coot ") + VERSION + ")";
+      gtk_widget_set_tooltip_text(name, tip.c_str());
+   }
    gtk_box_append(GTK_BOX(left), name);
 
    GtkWidget *center = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
