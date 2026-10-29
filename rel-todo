@@ -1,43 +1,115 @@
 --- Items---
 
+o "Worms by B-factor" - should not be difficult.
+
+o multi-residue for copy-fragment "//A/90,92" didn't work
+  Nor did "//A/90||//A/92"
+
+o Oli: the preference to switch off active map on dragging
+  seems to be broken - it should update the map after mouse
+  release, but instead it is only happening when update_maps
+  is called explicitly (e.g. during recontouring)
+
+o let me change the moving-atoms bond thickness
+
+o let me change the moving atoms hue/lighting(?)
+
+o colour residues by atom overlap badness
+  (use user-defined colours of course)
+
+o Oli idea: search by sequence. Allow wildcard
+  and ambiguity e.g. (A/S). Consider sequon.
+
+o in "Open Recent" - show me the path (or a path
+  fragment so that I can see that I am loading
+  "refine.pdb" from the right directory)
+
+o user-defined colour in CA+sidechain mode?
+  Useful for colour-by-rotamer-probability
+
+o Search monomer library kill and reopen
+
+o likewise Environment distances
+
+o "Let me remove a module menu" - Oli
+
+o Contact dots during refinement, once added can no longer be undone (in the gui)
+
+o find arp warp persistance density for ligands
+
+o Add an end-cap to worms mesh
+
+o EJD: Let me undock the validation buttons.
+
 o Impact statement for Moorhen.
 
+o add (back) alpha helix restraints
+* Done.
+
+o look at coot-nearest-layer-runtime-api-HEAD.patch
+o look at coot-gtk4-deferred-map-pan.patch
+* Done.
+
+o Ah, OK. I will add --no-config-script and --no-scripts which
+  will do both.
+  --no-state-script is already a thing.
+
+o add mmrrcc to the src api
+* Done.
+
 o Look at A1D0T ligand thumbnail - the methyls should not be wedged.
+* Can't reproduce.
 
 o What to test for mmcif dictionaries to buster?
   Generate restraints for new ligands with pyrogen, check that they work and hand them over.
 
-o if esd is more than 360 (200) then ignore that torsion during refinement.
-
-o look at carbohydrate building before release
-
-o check that the atom in the go-to-atom icon is round
-
-o Restart blank with session restore option in an overlay
-  modified by command line argument (--no-state-script
-  forces blank startup with no restore option).
-
-o do worms on 4hhb. The colour variation per chain needs to be larger.
-
-o gaussian surfaces should be drawn with model Material
+o the A1??? monomers are not correctly downloaded/stored
+  e.g. ~/.cache/Coot/monomers/a/A1DIB.cif. What puts them there? Old/dead code now?
+  the are OK in ~/.cache/Coot/A1???.cif
 
 o have another try to fix the specular light in fancy mode
   (test with 4hhb molecular surface)
 
-o trying to change the model material - seems not to affect the drawing of
-  molecule2triangles objects (say, a surface)
-
 o look at 23sr, 9i9k
 
 o Add a "view" that shows formal charges - on this residue - or whole molecule
-
-o configure should fail if it can't find swig
 
 o use RDKit canonical SMILES for atom order and hence atom name.
 
 o make default bond smoothness be "smooth" (2, I think)
 
 o for agentic coot, create a function that does "validate_residue()" - combining metrics
+
+o fix order of layla exit buttons
+* Done.
+
+o configure should fail if it can't find swig
+* Done.
+
+o Restart blank with session restore option in an overlay
+  modified by command line argument (--no-state-script
+  forces blank startup with no restore option).
+* Done.
+
+o gaussian surfaces should be drawn with model Material
+* Done. The material is copied over when the mesh is made.
+        Maybe not a good idea.
+
+o trying to change the model material - seems not to affect the drawing of
+  molecule2triangles objects (say, a surface)
+* The material are copied when the object is constructed.
+
+o check that the atom in the go-to-atom icon is round
+* Done. It is AFAICS.
+
+o do worms on 4hhb. The colour variation per chain needs to be larger.
+* Done.
+
+o if esd is more than 360 (200) then ignore that torsion during refinement.
+* Done.
+
+o look at carbohydrate building before release
+* Done.
 
 o in Range/Pair show the selection
   on completion (second pick), flash the residue range.
@@ -127,8 +199,6 @@ o branching from a branch called dev, i.e. double-dev, does it branch
 * From dev.
 
 o fix installation of coot_headless_api in homebrew
-
-o what does prolif give us?
 
 o add helices as cylinders to MoleculesToTriangles
 

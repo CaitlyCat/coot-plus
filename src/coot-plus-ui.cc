@@ -166,6 +166,7 @@ struct common_menu_t { std::string task; std::string key; std::string entry; std
 
 void add_coot_plus_commands(); // Coot+-only commands (symmetry toggle, label size, panels)
 void set_ruler(bool on); // Coot+ ruler on/off (keeps the header button in step)
+void set_nearest_layer(bool on); // Coot's nearest-layer transparency switch (keeps the Maps page switch in step)
 void show_message(const std::string &kind, const std::string &text, const std::string &hint);
 void set_priorities();
 
@@ -1005,6 +1006,9 @@ void add_coot_plus_commands() {
        [] () { set_scroll_mode(!get_scroll_wheel_zooms()); });
    add("Undo View", "Header", "undo display view dots overlaps surface ribbons colours contour symmetry labels revert",
        [] () { undo_view_change(); });
+   add("See-through Solid Maps: Front Surface Only (on/off)", "Maps",
+       "nearest layer transparency transparent see through solid surface map front opacity",
+       [] () { set_nearest_layer(get_nearest_layer_transparency() == 0); });
    add("Ruler (show/hide)", "Header", "ruler measure distance length size blob tape scale angstrom",
        [] () { set_ruler(!coot_plus_ruler_is_on()); });
    add("Ruler: Put Back in the Middle", "Header", "ruler reset centre middle measure",
@@ -1072,7 +1076,7 @@ const std::map<std::string, std::vector<std::string> > &common_tools() {
                     "section:Groups", "special:groups", "section:Recent files", "special:recent"}},
       {"Navigate", {"app.go_to_atom_action", "kb:Show Go To Residue Keyboarding Window|Type a Residue Number",
                     "tb:Go to Next Ligand", "tb:Reset View", "tb:Display Manager"}},
-      {"Maps",     {"special:maps-hint", "app.map_parameters_action", "kb:Increase Map Radius",
+      {"Maps",     {"special:maps-hint", "special:nearest-layer", "app.map_parameters_action", "kb:Increase Map Radius",
                     "kb:Decrease Map Radius", "app.make_a_difference_map_action"}},
       {"Symmetry", {"special:symmetry-toggle", "special:assembly", "app.draw_cell_and_symmetry_action|Symmetry Settings",
                     "app.undo_symmetry_view_action", "app.save_symmetry_coordinates_action"}},
@@ -1111,7 +1115,7 @@ const std::vector<task_t> &tasks() {
             "section:Molecules",
             "tb:Display Manager", "app.sequence_view_action", "app.residue_type_selection_action"}},
       {"Maps", "coot-plus-maps-symbolic", "Contour, radius and map tools", {
-            "special:maps-hint",
+            "special:maps-hint", "special:nearest-layer",
             "section:Contour and radius",
             "app.map_parameters_action", "kb:Increase Map Radius", "kb:Decrease Map Radius",
             "kb:Display Next Map", "kb:Change Scroll-wheel map",
@@ -1359,6 +1363,41 @@ GtkWidget *make_menu_tool_button(const std::string &menu_id, const std::string &
    return mb;
 }
 
+// Coot's "nearest-layer transparency" (on by default): a see-through *solid* map shows only its
+// front surface instead of all its layers blended. It does nothing for mesh maps or opaque maps.
+GtkWidget *nearest_layer_switch = nullptr;
+void set_nearest_layer(bool on) {
+   set_nearest_layer_transparency(on ? 1 : 0);
+   save_coot_plus_setting_bool("nearest-layer-transparency", on);
+   if (nearest_layer_switch && gtk_switch_get_active(GTK_SWITCH(nearest_layer_switch)) != on)
+      gtk_switch_set_active(GTK_SWITCH(nearest_layer_switch), on);
+}
+GtkWidget *make_nearest_layer_switch_row() {
+   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+   gtk_widget_add_css_class(row, "coot-plus-switch-row");
+   GtkWidget *l = gtk_label_new("See-through solid maps: front surface only");
+   gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+   gtk_label_set_max_width_chars(GTK_LABEL(l), 22);
+   gtk_widget_set_hexpand(l, TRUE);
+   gtk_widget_set_tooltip_text(row, "For maps drawn as a solid surface (map ⋯ › Solid surface) with opacity below 100 %.\n"
+                                    "On: only the nearest surface is drawn see-through - clearer, and faster.\n"
+                                    "Off: every layer of the surface is blended - more see-through but muddier.\n"
+                                    "Mesh maps are not affected.");
+   GtkWidget *sw = gtk_switch_new();
+   gtk_widget_set_focusable(sw, FALSE);
+   gtk_widget_set_valign(sw, GTK_ALIGN_CENTER);
+   gtk_switch_set_active(GTK_SWITCH(sw), get_nearest_layer_transparency() != 0);
+   g_signal_connect(sw, "notify::active", G_CALLBACK(+[] (GObject *o, GParamSpec *, gpointer) {
+                       if (updating_widgets) return;
+                       set_nearest_layer(gtk_switch_get_active(GTK_SWITCH(o)));
+                    }), nullptr);
+   gtk_box_append(GTK_BOX(row), l);
+   gtk_box_append(GTK_BOX(row), sw);
+   nearest_layer_switch = sw;
+   return row;
+}
+
 GtkWidget *make_symmetry_switch_row(GtkWidget **switch_store) {
    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
    gtk_widget_add_css_class(row, "coot-plus-switch-row");
@@ -1522,8 +1561,12 @@ void populate_sidebar(GtkWidget *outer) {
             gtk_box_append(GTK_BOX(page), make_symmetry_switch_row(&symmetry_switch_sidebar));
             return;
          }
+         if (ref == "special:nearest-layer") {
+            gtk_box_append(GTK_BOX(page), make_nearest_layer_switch_row());
+            return;
+         }
          if (ref == "special:maps-hint") {
-            GtkWidget *l = gtk_label_new("Contour sliders for each map are in the inspector on the right.");
+            GtkWidget *l = gtk_label_new("Contour and opacity for each map are in the Molecules list on the right.");
             gtk_label_set_xalign(GTK_LABEL(l), 0.0);
             gtk_label_set_wrap(GTK_LABEL(l), TRUE);
             gtk_label_set_max_width_chars(GTK_LABEL(l), 24);
@@ -6088,6 +6131,13 @@ void coot_plus_setup_ui(GtkApplication *application) {
    gtk_box_append(GTK_BOX(left), make_panel_toggle("coot-plus-sidebar-symbolic", "Show/hide the task sidebar", side, "show-sidebar"));
    GtkWidget *name = gtk_label_new("Coot+");
    gtk_widget_add_css_class(name, "coot-plus-app-name");
+   {
+      // "Coot+ 1.2 | 1.3.4": Coot+ version | the Coot release underneath (set by the app's launcher)
+      const char *v = getenv("COOT_PLUS_VERSION");
+      std::string tip = v ? std::string("Coot+ ") + v + "\n(Coot+ version | the Coot release it is built on)"
+                          : std::string("Coot+ development build (Coot ") + VERSION + ")";
+      gtk_widget_set_tooltip_text(name, tip.c_str());
+   }
    gtk_box_append(GTK_BOX(left), name);
 
    GtkWidget *center = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -6100,6 +6150,7 @@ void coot_plus_setup_ui(GtkApplication *application) {
    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
    gtk_widget_set_valign(right, GTK_ALIGN_CENTER);
    graphics_info_t::scroll_wheel_zooms = load_coot_plus_setting_bool("scroll-wheel-zooms", false);
+   set_nearest_layer_transparency(load_coot_plus_setting_bool("nearest-layer-transparency", true) ? 1 : 0);
    gtk_box_append(GTK_BOX(right), make_presets_menu_button());
    gtk_box_append(GTK_BOX(right), make_scroll_mode_switch());
    gtk_box_append(GTK_BOX(right), gtk_separator_new(GTK_ORIENTATION_VERTICAL));

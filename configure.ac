@@ -309,6 +309,14 @@ dnl =========================== PyGObject =========================
 
 PKG_CHECK_MODULES(PyGObject, pygobject-3.0 >= 3.36)
 
+dnl =========================== SWIG =========================
+
+dnl swig generates the Python bindings (src/coot_wrap_python.cc, pyrogen).
+dnl Find it and substitute $(SWIG) for the Makefiles.
+AC_PATH_PROG([SWIG], [swig])
+AS_IF([test "x$SWIG" = x],
+  [AC_MSG_ERROR([swig not found; it is needed to build the Python bindings])])
+
 dnl =========================== Boost =========================
 
 AX_BOOST_BASE(,,[AC_MSG_ERROR([No boost found])])
@@ -541,29 +549,6 @@ else
 fi
 AC_SUBST(ACEDRG_TABLES_DIR, "$acedrg_tables_dir")
 AM_CONDITIONAL(HAVE_ACEDRG_TABLES_DIR, [test "x$acedrg_tables_dir" != x])
-
-dnl Optional gemmi+SQLite backend for the AceDRG bond/angle tables. Needs a
-dnl gemmi with the public insert_bond_row()/insert_angle_row() seam (gemmi
-dnl PR #438) - an explicit opt-in until that lands in a gemmi release.
-AC_ARG_WITH([gemmi-sqlite],
-   AS_HELP_STRING([--with-gemmi-sqlite use gemmi + SQLite for AceDRG bond/angle table lookups (needs a gemmi with the insert-row seam)]),
-   with_gemmi_sqlite=true, with_gemmi_sqlite=false)
-AC_MSG_CHECKING([for gemmi-sqlite AceDRG tables])
-if test "x$with_gemmi_sqlite" = xtrue ; then
-   AC_MSG_RESULT(yes)
-   AC_LANG_PUSH(C++)
-   save_CPPFLAGS="$CPPFLAGS"
-   CPPFLAGS="$CPPFLAGS $GEMMI_CXXFLAGS"
-   AC_CHECK_HEADER([gemmi/acedrg_tables.hpp], [],
-      AC_MSG_FAILURE([--with-gemmi-sqlite given but gemmi/acedrg_tables.hpp was not found - a gemmi with the AceDRG tables and the insert-row seam is needed]))
-   CPPFLAGS="$save_CPPFLAGS"
-   AC_LANG_POP
-   AC_SUBST(GEMMI_SQLITE_CFLAGS, "-DUSE_GEMMI_SQLITE")
-else
-   AC_MSG_RESULT(no)
-   AC_SUBST(GEMMI_SQLITE_CFLAGS, "")
-fi
-AM_CONDITIONAL(MAKE_GEMMI_SQLITE, [test x$with_gemmi_sqlite = xtrue])
 
 # 20090613 We need to be able to determine the build type, and embed
 # that value in to coot binary.  We need to do that for the updating
