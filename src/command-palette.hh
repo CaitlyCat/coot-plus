@@ -31,4 +31,8 @@
 ///        finds and runs menu items and key bindings.
 void show_command_palette();
 
+// COOT+ hook: when set (by the Coot+ interface) and it returns true, show_command_palette()
+// opens the Coot+ command search instead, so there is one search box, not two.
+extern bool (*coot_plus_command_search_hook)();
+
 #endif // COMMAND_PALETTE_HH

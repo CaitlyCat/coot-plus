@@ -436,7 +436,11 @@ namespace {
    }
 }
 
+bool (*coot_plus_command_search_hook)() = nullptr; // COOT+ hook (see command-palette.hh)
+
 void show_command_palette() {
+
+   if (coot_plus_command_search_hook && coot_plus_command_search_hook()) return; // COOT+ hook
 
    static bool is_setup = false;
    if (! is_setup) {

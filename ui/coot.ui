@@ -1057,17 +1057,13 @@
       <attribute name="label">About</attribute>
       <section>
         <item>
-          <attribute name="label">Search Commands...</attribute>
-          <attribute name="action">app.command_search_action</attribute>
-          <attribute name="accel">&lt;Meta&gt;k</attribute>
-        </item>
-        <item>
           <attribute name="label">About Coot...</attribute>
           <attribute name="action">app.about_coot_action</attribute>
         </item>
         <item>
           <attribute name="label">Search Menus...</attribute>
           <attribute name="action">app.command_palette_action</attribute>
+          <attribute name="accel">&lt;Meta&gt;k</attribute>
         </item>
         <item>
           <attribute name="label">Shortcuts...</attribute>
