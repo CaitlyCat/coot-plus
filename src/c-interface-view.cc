@@ -385,6 +385,16 @@ void set_worm_tube_radius(int imol, float wtr) {
 
 }
 
+//! set the tube helix radius
+void set_tube_helix_radius(int imol, float thr) {
+
+   if (is_valid_model_molecule(imol)) {
+      if (thr > 0.0f)
+         graphics_info_t::molecules[imol].set_tube_helix_radius(thr);
+   }
+
+}
+
 
 
 
@@ -593,8 +603,8 @@ void set_draw_gl_ramachandran_plot_during_refinement(short int state) {
 void reset_framebuffers() {
 
    graphics_info_t g;
-   GtkAllocation allocation = g.get_glarea_allocation();
-   g.reset_frame_buffers(allocation.width, allocation.height);
+   // use the device-pixel size (as on_glarea_resize() does), not the allocation (which is in logical points)
+   g.reset_frame_buffers(g.graphics_x_size, g.graphics_y_size);
    g.graphics_draw();
 
 }

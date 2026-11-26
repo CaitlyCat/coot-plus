@@ -344,6 +344,10 @@ namespace coot {
 
    std::vector<mmdb::Atom *> atoms_with_zero_occupancy(mmdb::Manager *mol);
 
+   // atoms (in the first model) whose occupancy is not 1.0 (to within 0.001)
+   // - this includes zero-occupancy atoms and atoms with occupancy greater than 1.
+   std::vector<mmdb::Atom *> atoms_with_partial_occupancy(mmdb::Manager *mol);
+
    std::vector<mmdb::Residue *> residues_with_alt_confs(mmdb::Manager *mol);
 
    // convert atoms in residue to HETATMs.  Return the number of HET
@@ -381,6 +385,25 @@ namespace coot {
    std::vector<mmdb::Residue *> residues_near_position(const clipper::Coord_orth &pt,
                                                   mmdb::Manager *mol,
                                                   double radius);
+
+   //! \brief test if a residue sits on top of atoms that are already in a molecule
+   //!
+   //! Typically used to test a residue (from a different molecule) before it is
+   //! merged into `mol`. `residue_p` need not be in `mol`, but if it is, its own
+   //! atoms are not tested against.
+   //!
+   //! Hydrogen atoms are ignored. Waters in `mol` are ignored unless `residue_p`
+   //! is itself a water. Only the first model of `mol` is tested and symmetry
+   //! is not considered.
+   //!
+   //! @param residue_p the residue to test
+   //! @param mol the molecule that may already have atoms at this position
+   //! @param dist_crit the overlap distance in Angstroms
+   //! @return true if any atom of `residue_p` is closer than `dist_crit`
+   //!         to an atom in `mol`
+   bool residue_overlaps_atoms_in_molecule(mmdb::Residue *residue_p,
+                                           mmdb::Manager *mol,
+                                           float dist_crit = 1.0f);
 
 
    // Don't include residues that are HOH residues that are not bonded to
@@ -1366,10 +1389,15 @@ namespace coot {
                            short int is_from_shelx_ins_flag,
                            float b_factor=20.);
 
-      void mutate_base(mmdb::Residue *residue, mmdb::Residue *std_base,
-                       bool use_old_style_naming,
-                       bool print_match_stats=false,
-                       float b_factor=20.0);
+      // return 1 on success, 0 on failure
+      int mutate_base(mmdb::Residue *residue, mmdb::Residue *std_base,
+                      bool use_old_style_naming,
+                      bool print_match_stats=false,
+                      float b_factor=20.0);
+      // Return the standard-residue name for a base mutation, e.g. "C" on a DNA residue
+      // (current_res_name "DA") becomes "DC". Explicit DNA types ("DA" etc.) are returned as is.
+      std::string standard_residue_name_for_base_mutation(const std::string &current_res_name,
+                                                          const std::string &new_base_type);
       // which calls
       std::string convert_base_name(const std::string &std_base_name, bool use_old_style_naming);
 

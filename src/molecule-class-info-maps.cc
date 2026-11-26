@@ -227,6 +227,8 @@ molecule_class_info_t::draw_map_molecule( stereo_eye_t eye,
       shader.set_float_for_uniform("fresnel_power", fresnel_settings.power);
       shader.set_vec4_for_uniform("fresnel_colour", fresnel_settings.colour);
 
+      shader.set_bool_for_uniform("do_view_dependent_transparancy", do_map_view_dependent_map_transparancy);
+
       float opacity = density_surface_opacity;
       if (opacity < 1.0) {
          map_as_mesh.use_blending = true;
@@ -903,6 +905,7 @@ molecule_class_info_t::update_map_triangles(float radius, coot::Cartesian centre
       } else {
          // std::cout << "INFO:: no make_current context error!" << std::endl;
          setup_glsl_map_rendering(centre_c, radius); // turn tri_con into buffers.
+         map_contours_outdated = false;
       }
 
 
@@ -2876,6 +2879,56 @@ molecule_class_info_t::set_name(std::string name) {
 
 }
 
+// The default file name for a map that was created in this session.
+// e.g. for molecule 3: "Masked Map from /a/b/c.map" -> "Masked-Map-from-c.map-coot-3.map"
+std::string
+molecule_class_info_t::save_map_name_suggestion() const {
+
+   std::string s;
+   std::vector<std::string> parts = coot::util::split_string(name_, " ");
+   for (unsigned int i=0; i<parts.size(); i++) {
+      std::string part = coot::util::file_name_non_directory(coot::util::intelligent_debackslash(parts[i]));
+      if (part.empty()) continue;
+      if (! s.empty()) s += "-";
+      s += part;
+   }
+   if (s.empty()) s = "map";
+   s += "-coot-";
+   s += graphics_info_t::int_to_string(imol_no);
+   s += ".map";
+   return s;
+}
+
+// Write the map as a CCP4 map and make that file be the means by which this
+// map is restored from the state script. Return 0 on success.
+int
+molecule_class_info_t::save_map(const std::string &file_name) {
+
+   int ierr = 0;
+   try {
+      clipper::CCP4MAPfile mapout;
+      mapout.open_write(file_name);
+      mapout.export_xmap(xmap);
+      mapout.close_write();
+   }
+   catch (const clipper::Message_base &exc) {
+      ierr = 1;
+   }
+
+   if (ierr) {
+      std::cout << "WARNING:: Map write to " << file_name << " failed!" << std::endl;
+   } else {
+      logger.log(log_t::INFO, "saved map", file_name);
+      // c.f. read_ccp4_map()
+      save_state_command_strings_.push_back("coot");
+      save_state_command_strings_.push_back("handle-read-ccp4-map");
+      save_state_command_strings_.push_back(single_quote(coot::util::intelligent_debackslash(file_name)));
+      save_state_command_strings_.push_back(graphics_info_t::int_to_string(xmap_is_diff_map));
+      set_name(file_name);
+   }
+   return ierr;
+}
+
 
 int
 molecule_class_info_t::make_map_from_phs(std::string pdb_filename,
@@ -3038,8 +3091,8 @@ molecule_class_info_t::make_map_from_cif_2fofc(int imol_no_in,
    graphics_info_t g;
    int r = -1;
    if (g.is_valid_model_molecule(imol_coords))
-      r =  make_map_from_cif(imol_no_in, cif_file_name,
-			     g.molecules[imol_coords].atom_sel);
+      r =  make_map_from_cif_2fofc(imol_no_in, cif_file_name,
+				   g.molecules[imol_coords].atom_sel);
    else
       std::cout << "WARNING:: " << imol_coords << " is not a valid model molecule" << std::endl;
    return r;
@@ -4693,6 +4746,7 @@ molecule_class_info_t::fit_to_map_by_random_jiggle(mmdb::PPAtom atom_selection,
       }
    } else {
       std::cout << " nothing better found " << std::endl;
+      v = initial_score; // the coordinates are unchanged, so this is their fit score
    }
    return v;
 }
@@ -5312,7 +5366,9 @@ molecule_class_info_t::export_model_molecule_as_obj(const std::string &file_name
    make_bonds_type_checked();
    write_model_vertices_and_triangles_to_file_mode = false;
 
-   return false;
+   // the writing of the file is a side-effect of make_bonds_type_checked() and
+   // its status is not passed back, so test for the file
+   return coot::file_exists(file_name);
 }
 
 bool

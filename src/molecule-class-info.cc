@@ -22,6 +22,7 @@
  */
 
 #include "molecule-class-info.h"
+#include "glycoblocks.hh"
 #include "stereo-eye.hh"
 #include <filesystem>
 #ifdef USE_PYTHON
@@ -286,6 +287,7 @@ molecule_class_info_t::setup_internal() { // init
    model_mesh_first_time = true;
 
    worm_tube_radius = 1.0;
+   tube_helix_radius = 2.5;
 
    // material_for_maps.do_specularity = false;
    // material_for_maps.specular_strength = 0.5; // non-shiny maps by default.
@@ -298,6 +300,11 @@ molecule_class_info_t::setup_internal() { // init
 
    map_as_mesh.set_name("empty map molecule mesh");
    model_molecule_meshes.set_name("empty model molecule mesh");
+   glycoblocks_meshes.set_name("glycoblocks");
+   draw_glycoblocks_flag = false;
+   glycoblocks_3d_flag = false;
+   glycoblocks_scale_factor = 1.0f;
+   glycoblocks_colour = glm::vec4(-1.0f);
 
    // molecule_as_mesh_atoms_1   = Mesh("molecule_as_mesh_atoms_1");
    // molecule_as_mesh_atoms_2   = Mesh("molecule_as_mesh_atoms_2");
@@ -315,6 +322,8 @@ molecule_class_info_t::setup_internal() { // init
 
    // gaussian opacity
    gaussian_surface_opacity = 1.0f;
+
+   do_map_view_dependent_map_transparancy = false;
 
    // don't show strict ncs unless it's turned on.
    show_strict_ncs_flag = 1;
@@ -2531,7 +2540,7 @@ molecule_class_info_t::local_b_factor_display(bool state,
 int molecule_class_info_t::remove_atom_label(const char *chain_id, int iresno, const char *atom_id) {
 
    int i = atom_index(chain_id, iresno, atom_id);
-   if (i > 0)
+   if (i >= 0)
       unlabel_atom(i);
    return i;
 }
@@ -4449,6 +4458,10 @@ molecule_class_info_t::make_meshes_from_bonds_box_instanced_version() {
       // Restore the user's material settings after recreating the bonds mesh
       model_molecule_meshes.set_material(material_for_models);
 
+      // keep the glycoblocks in step with the model
+      if (draw_glycoblocks_flag)
+         make_glycoblocks();
+
       // 2025-07-28 10:14 I don't want to set this here, surely.
       // There should be some other control.
       // I want to be able to update the mesh without seeing the bonds (Ctrl F)
@@ -4631,6 +4644,52 @@ molecule_class_info_t::draw_molecule_as_meshes(Shader *shader_p,
 
 }
 
+
+// (re)make the glycoblocks for all the sugars in the molecule
+void
+molecule_class_info_t::make_glycoblocks() {
+
+   if (! atom_sel.mol) return;
+   if (! graphics_info_t::use_graphics_interface_flag) return;
+
+   coot::instanced_mesh_t im = coot::glycoblocks::DrawSugarBlocks(atom_sel.mol, "/*/*/*", glycoblocks_3d_flag,
+                                                                    glycoblocks_scale_factor, glycoblocks_colour);
+   graphics_info_t::attach_buffers();
+   glycoblocks_meshes.import(im);
+   glycoblocks_meshes.set_material(material_for_models);
+}
+
+void
+molecule_class_info_t::set_show_glycoblocks(bool state) {
+
+   draw_glycoblocks_flag = state;
+   if (state)
+      make_glycoblocks();
+}
+
+void
+molecule_class_info_t::set_glycoblocks_3d(bool state) {
+
+   glycoblocks_3d_flag = state;
+   if (draw_glycoblocks_flag)
+      make_glycoblocks();
+}
+
+void
+molecule_class_info_t::set_glycoblocks_scale_factor(float sf) {
+
+   glycoblocks_scale_factor = sf;
+   if (draw_glycoblocks_flag)
+      make_glycoblocks();
+}
+
+void
+molecule_class_info_t::set_glycoblocks_colour(const glm::vec4 &col) {
+
+   glycoblocks_colour = col;
+   if (draw_glycoblocks_flag)
+      make_glycoblocks();
+}
 
 // draw molecule as instanced meshes.
 void
@@ -6957,11 +7016,20 @@ molecule_class_info_t::add_coords(const atom_selection_container_t &asc) {
 int
 molecule_class_info_t::quick_save() {
 
+   int status = 0;
    if (Have_unsaved_changes_p()) {
       std::string s = stripped_save_name_suggestion();
       save_coordinates(s);
    }
-   return 0;
+   // A map that was created in this session (e.g. by masking) has no file from which
+   // it can be restored - its save state commands are blank.
+   if (has_xmap()) {
+      if (save_state_command_strings_.empty()) {
+         std::string s = save_map_name_suggestion();
+         status = save_map(s);
+      }
+   }
+   return status;
 }
 
 
@@ -8391,7 +8459,11 @@ molecule_class_info_t::get_save_molecule_filename(const std::string &dir) {
    std::string time_string = save_time_string;
    std::string t_name_6 = t_name_5 + "_" + time_string;
 
-   std::string index_string = coot::util::int_to_string(history_index);
+   // The backup file is going to be stored at the end of history_filename_vec, so
+   // number it by that position. Don't use history_index: that goes backwards on
+   // undo and on restore_to_backup_checkpoint(), which re-used (and so overwrote)
+   // the files of earlier entries in the history.
+   std::string index_string = coot::util::int_to_string(history_filename_vec.size());
    std::string t_name_7 = t_name_6 + "_modification_" + index_string;
 
    std::string extension = ".pdb";
@@ -8519,9 +8591,12 @@ molecule_class_info_t::make_backup(const std::string &descr) { // changes histor
             }
 
             save_history_file_name(backup_file_name, descr);
-            if (history_index == max_history_index)
-               max_history_index++;
-            history_index++;
+            // history_filename_vec is append-only, so after a backup we are at the
+            // end of the history - even if we had gone back in the history (by
+            // undo or restore_to_backup_checkpoint()) before this modification.
+            // history_filename_vec[history_index - 1] is the backup just made.
+            history_index = history_filename_vec.size();
+            max_history_index = history_index;
          }
       } else {
          std::cout << "WARNING:: BACKUP:: Ooops - no atoms to backup for this empty molecule"
@@ -9197,7 +9272,9 @@ molecule_class_info_t::write_pdb_file(const std::string &filename) {
    if (atom_sel.n_selected_atoms > 0) {
       std::string ext = coot::util::file_name_extension(filename);
       if (coot::util::extension_is_for_shelx_coords(ext)) {
-         write_shelx_ins_file(filename);
+         std::pair<int, std::string> p = write_shelx_ins_file(filename);
+         if (p.first) // 1 is success
+            err = 0;
       } else {
          mmdb::byte bz = mmdb::io::GZM_NONE;
          // err = write_atom_selection_file(atom_sel, filename, bz);

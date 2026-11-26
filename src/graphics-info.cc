@@ -1554,7 +1554,7 @@ graphics_info_t::unskeletonize_map(int imol) {
 
    graphics_info_t g;
 
-   if (imol >= 0) {
+   if (is_valid_map_molecule(imol)) {
       g.molecules[imol].unskeletonize_map();
       graphics_draw();
    } else {
@@ -1724,11 +1724,6 @@ graphics_info_t::accept_moving_atoms() {
    in_moving_atoms_drag_atom_mode_flag = 0; // no more dragging atoms
    have_fixed_points_sheared_drag_flag = 0;
    in_edit_chi_mode_view_rotate_mode = 0;
-
-   // Why do I want to do this when the intermediate atoms are undisplayed?
-   // To *clear up* the interactive probe dots.
-   if (do_coot_probe_dots_during_refine_flag)
-      do_interactive_coot_probe(); // in accept_moving_atoms() to turn off the dots
 
    // Hmm... this won't work as expected because the difference map is not updated yet!
    // I need to hook into the end of a difference map update.
@@ -2225,6 +2220,13 @@ graphics_info_t::clear_up_moving_atoms() {
       update_bad_nbc_atom_pair_dashed_lines();
       update_chiral_volume_outlier_marker_positions();
 
+      // the intermediate atoms contact dots and clashes. Their draw state has to be turned off,
+      // otherwise they are drawn again (with the old positions) as soon as there are intermediate
+      // atoms again - i.e. at the start of the next refinement - even if contact dots during
+      // refinement have been turned off. They are turned back on when they are regenerated.
+      for (auto &obj : generic_display_objects)
+         if (obj.is_intermediate_atoms_object())
+            obj.mesh.set_draw_this_mesh(false);
    }
 }
 
@@ -2487,9 +2489,9 @@ graphics_info_t::make_moving_atoms_graphics_object(int imol,
                                                                   // make_glsl_bonds_type_checked()
                                                                   // update this?
    float bond_width = molecules[imol].get_bond_thickness();
-   moving_atoms_molecule.set_bond_thickness(0.7f * bond_width); // why scaled like this is needed!?. At some
-                                                                 // stage remove this and intermediate atom
-                                                                 // radius adjustment in make_glsl_bonds_type_checked()
+   float bsf = intermediate_atoms_bond_width_scale_factor;
+   moving_atoms_molecule.set_bond_thickness(bsf * bond_width);
+
    moving_atoms_molecule.is_intermediate_atoms_molecule = true;
 
    gtk_gl_area_attach_buffers(GTK_GL_AREA(glareas[0])); // needed?
@@ -3875,10 +3877,10 @@ graphics_info_t::update_things_on_move_and_redraw() {
 
 
 void
-graphics_info_t::update_things_on_move() {
+graphics_info_t::update_things_on_move(bool is_drag_pan) {
 
    for (int ii=0; ii<n_molecules(); ii++) {
-      if (GetActiveMapDrag())
+      if (!is_drag_pan || GetActiveMapDrag())
          molecules[ii].update_map(auto_recontour_map_flag);
       molecules[ii].update_clipper_skeleton();
       molecules[ii].update_symmetry();
@@ -5869,55 +5871,37 @@ graphics_info_t::add_dictionary_glob_extension(const std::string &extension) {
 void
 graphics_info_t::remove_coordinates_glob_extension(const std::string &extension) {
 
-  std::vector<std::string>::iterator it;
-  for (it = coordinates_glob_extensions->begin(); it<coordinates_glob_extensions->end(); ++it) {
-    if (*it == extension) {
-      coordinates_glob_extensions->erase(it);
-      // could put in break here!?
-      // avoid since it could happen that you have multiples of same entry
-    }
-  }
+   std::vector<std::string> &v = *coordinates_glob_extensions;
+   v.erase(std::remove(v.begin(), v.end(), extension), v.end());
 }
 
 
 void
 graphics_info_t::remove_data_glob_extension(const std::string &extension) {
 
-  std::vector<std::string>::iterator it;
-  for (it = data_glob_extensions->begin(); it<data_glob_extensions->end(); it++) {
-    if (*it == extension) {
-      data_glob_extensions->erase(it);
-    }
-  }
+   std::vector<std::string> &v = *data_glob_extensions;
+   v.erase(std::remove(v.begin(), v.end(), extension), v.end());
 }
 
 void
 graphics_info_t::remove_map_glob_extension(const std::string &extension) {
 
-  std::vector<std::string>::iterator it;
-  for (it = map_glob_extensions->begin(); it<map_glob_extensions->end(); it++) {
-    if (*it == extension) {
-      map_glob_extensions->erase(it);
-    }
-  }
+   std::vector<std::string> &v = *map_glob_extensions;
+   v.erase(std::remove(v.begin(), v.end(), extension), v.end());
 }
 
 void
 graphics_info_t::remove_dictionary_glob_extension(const std::string &extension) {
 
-  std::vector<std::string>::iterator it;
-  for (it = dictionary_glob_extensions->begin(); it<dictionary_glob_extensions->end(); it++) {
-    if (*it == extension) {
-      dictionary_glob_extensions->erase(it);
-    }
-  }
+   std::vector<std::string> &v = *dictionary_glob_extensions;
+   v.erase(std::remove(v.begin(), v.end(), extension), v.end());
 }
 
 
 void
 graphics_info_t::check_chiral_volumes(int imol) {
 
-   if (imol < n_molecules()) {
+   if (imol >= 0 && imol < n_molecules()) {
       if (molecules[imol].has_model()) {
          // return a pair: first is the residues for which no
          // restraints were found second is a vector of atom specs
@@ -6525,11 +6509,13 @@ graphics_info_t::add_lsq_plane_atom(int imol, int atom_index) {
 int
 graphics_info_t::remove_last_lsq_plane_atom() {
 
-   if (lsq_plane_atom_positions->size() > 1) {
-      lsq_plane_atom_positions->resize(lsq_plane_atom_positions->size()-1);
+   int status = 0;
+   if (! lsq_plane_atom_positions->empty()) {
+      lsq_plane_atom_positions->pop_back();
       graphics_draw();
+      status = 1;
    }
-   return 0;
+   return status;
 }
 
 
@@ -6753,7 +6739,7 @@ void graphics_info_t::ephemeral_overlay_label(const std::string &overlay_label_t
 void
 graphics_info_t::quick_save() {
 
-   std::cout << "Quick Save!" << std::endl;
+   std::cout << "INFO:: Quick Save!" << std::endl;
 
    for (int imol=0; imol<n_molecules(); imol++)
       molecules[imol].quick_save();
@@ -6955,10 +6941,83 @@ void graphics_info_t::hide_vertical_validation_frame_if_appropriate() {
 
    bool should_hide = !rama_plot_shown && !should_show_vbox;
 
+   if (! validation_boxes_is_docked) {
+      // the validation boxes are not in the pane, so only the rama plot matters for that
+      should_hide = !rama_plot_shown;
+      if (! should_show_vbox) {
+         GtkWidget *dialog = widget_from_builder("validation_boxes_dialog");
+         gtk_widget_set_visible(dialog, FALSE);
+      }
+   }
+
    if (should_hide) {
       GtkWidget* pane = widget_from_builder("main_window_ramachandran_and_validation_pane");
       gtk_widget_set_visible(pane, FALSE);
    }
+}
+
+// static
+void
+graphics_info_t::show_validation_boxes_vbox(int min_pane_position) {
+
+   GtkWidget *vbox = widget_from_builder("validation_boxes_vbox");
+   gtk_widget_set_visible(vbox, TRUE);
+
+   if (validation_boxes_is_docked) {
+      GtkWidget *pane_to_show = widget_from_builder("main_window_ramachandran_and_validation_pane");
+      GtkWidget *frame        = widget_from_builder("main_window_vertical_validation_frame");
+      GtkWidget *pane         = widget_from_builder("main_window_graphics_rama_vs_graphics_pane");
+      gtk_widget_set_visible(pane_to_show, TRUE);
+      gtk_widget_set_visible(frame, TRUE);
+      int pos = gtk_paned_get_position(GTK_PANED(pane));
+      if (pos < min_pane_position)
+         gtk_paned_set_position(GTK_PANED(pane), min_pane_position);
+   } else {
+      // Don't re-present a dialog that is already shown: this is called on every model
+      // change (via update_dynamic_validation_for_molecule()) and presenting a transient
+      // dialog again moves it back over the middle of the main window.
+      GtkWidget *dialog = widget_from_builder("validation_boxes_dialog");
+      if (! gtk_widget_get_visible(dialog)) {
+         set_transient_for_main_window(dialog);
+         gtk_window_present(GTK_WINDOW(dialog));
+      }
+   }
+}
+
+// static
+void
+graphics_info_t::set_validation_boxes_is_docked(bool state) {
+
+   if (state == validation_boxes_is_docked) return;
+   validation_boxes_is_docked = state;
+   if (! use_graphics_interface_flag) return;
+
+   GtkWidget *vbox       = widget_from_builder("validation_boxes_vbox");
+   GtkWidget *frame      = widget_from_builder("main_window_vertical_validation_frame");
+   GtkWidget *dialog     = widget_from_builder("validation_boxes_dialog");
+   GtkWidget *dialog_box = widget_from_builder("validation_boxes_dialog_box");
+
+   bool was_shown = gtk_widget_get_visible(vbox);
+
+   g_object_ref(vbox); // keep it alive while it has no parent
+   if (state) {
+      gtk_box_remove(GTK_BOX(dialog_box), vbox);
+      gtk_frame_set_child(GTK_FRAME(frame), vbox);
+      gtk_widget_set_visible(dialog, FALSE);
+   } else {
+      gtk_frame_set_child(GTK_FRAME(frame), nullptr);
+      gtk_box_append(GTK_BOX(dialog_box), vbox);
+   }
+   g_object_unref(vbox);
+
+   // main_window_vertical_validation_frame is itself inside an (unnamed) frame in the pane.
+   // Don't leave an empty frame under the rama plot when the boxes are undocked.
+   GtkWidget *outer_frame = gtk_widget_get_parent(frame);
+   gtk_widget_set_visible(outer_frame, state);
+
+   if (was_shown)
+      show_validation_boxes_vbox(320);
+   hide_vertical_validation_frame_if_appropriate();
 }
 
 

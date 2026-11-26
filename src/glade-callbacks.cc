@@ -1090,15 +1090,12 @@ on_refine_params_dialog_ok_button_clicked
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_goto_atom_window_destroy            (GtkWidget       *object,
-                                        gpointer         user_data)
-{
-/*   printf("on_goto_atom_window_destroy is executed. unsetting the static in graphics_info\n"); */
+gboolean
+on_goto_atom_window_close_request(GtkWindow *window, gpointer user_data) {
 
-/* we can get here from a WM dialog kill (as well as the conventional
-   "Cancel" button callback. Fixes July 12 bug? */
   unset_go_to_atom_widget();
+  gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+  return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -2579,13 +2576,14 @@ on_run_state_script_yes_button_clicked(GtkButton *button,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_edit_backbone_torsions_dialog_destroy(GtkWidget       *object,
-                                        gpointer         user_data) {
+gboolean
+on_edit_backbone_torsions_dialog_close_request(GtkWindow *window, gpointer user_data) {
 
    clear_moving_atoms_object();
   /* FIXME: also clear out the edib backbone ramaplot, if it exists. */
   /*   destroy_edit_backbone_rama_plot(); */
+   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+   return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -3027,12 +3025,13 @@ on_zoom_dialog_ok_button_clicked       (GtkButton       *button,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_edit_chi_angles_dialog_destroy      (GtkWidget       *object,
-                                        gpointer         user_data) {
-   /* needs to set widget */
+gboolean
+on_edit_chi_angles_dialog_close_request(GtkWindow *window, gpointer user_data) {
+
   unset_moving_atom_move_chis();
   set_show_chi_angle_bond(0);
+  gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+  return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -3133,12 +3132,12 @@ on_help_chi_angles_dismiss_button_clicked (GtkButton       *button,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_rotate_translate_obj_dialog_destroy (GtkWidget       *object,
-                                                            gpointer         user_data)
-{
-   /* need to save the position coordinates of dialog */
+gboolean
+on_rotate_translate_obj_dialog_close_request(GtkWindow *window, gpointer user_data) {
+
    rot_trans_reset_previous();
+   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+   return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -3245,13 +3244,13 @@ extern "C" G_MODULE_EXPORT
 void
 handle_map_properties_fresnel_change(int imol, GtkWidget *checkbutton) {
 
-   std::cout << "Here 0 in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
+   // std::cout << "Here 0 in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
    if (! graphics_info_t::is_valid_map_molecule(imol)) return;
-   std::cout << "Here A in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
+   // std::cout << "Here A in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
 
    molecule_class_info_t &m = graphics_info_t::molecules[imol];
    if (gtk_check_button_get_active(GTK_CHECK_BUTTON(checkbutton))) {
-      std::cout << "Here B in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
+      // std::cout << "Here B in handle_map_properties_fresnel_change() " << checkbutton << std::endl;
       GtkWidget *bias_entry  = GTK_WIDGET(g_object_get_data(G_OBJECT(checkbutton),  "bias_entry"));
       GtkWidget *scale_entry  = GTK_WIDGET(g_object_get_data(G_OBJECT(checkbutton), "scale_entry"));
       GtkWidget *power_entry  = GTK_WIDGET(g_object_get_data(G_OBJECT(checkbutton), "power_entry"));
@@ -3262,7 +3261,7 @@ handle_map_properties_fresnel_change(int imol, GtkWidget *checkbutton) {
          float bias  = coot::util::string_to_float(bias_entry_text);
          float scale = coot::util::string_to_float(scale_entry_text);
          float power = coot::util::string_to_float(power_entry_text);
-         std::cout << "Here C in handle_map_properties_fresnel_change() " << bias << " " << scale << " " << power << std::endl;
+         // std::cout << "Here C in handle_map_properties_fresnel_change() " << bias << " " << scale << " " << power << std::endl;
          m.fresnel_settings.update_settings(true, bias, scale, power);
       }
       catch (const std::runtime_error &rte) {
@@ -4536,12 +4535,12 @@ on_base_chooser_cancel_button_clicked  (GtkButton       *button,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_nucleic_acid_base_chooser_dialog_destroy
-                                        (GtkWidget       *object,
-                                        gpointer         user_data)
-{
+gboolean
+on_nucleic_acid_base_chooser_dialog_close_request(GtkWindow *window, gpointer user_data) {
+
    clear_pending_picks();
+   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+   return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -4809,13 +4808,13 @@ on_cis_trans_conversion_toggle_button_toggled(GtkToggleButton *togglebutton,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_other_model_tools_dialog_destroy    (GtkWidget       *object,
-                                        gpointer         user_data) {
+gboolean
+on_other_model_tools_dialog_close_request(GtkWindow *window, gpointer user_data) {
 
-   std::cout << "---------------- this should not happen on_other_model_tools_dialog_destroy " << std::endl;
    do_cis_trans_conversion_setup(0);
    unset_other_modelling_tools_dialog();
+   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+   return TRUE; // Prevent the default close behavior (destruction)
 }
 
 extern "C" G_MODULE_EXPORT
@@ -4954,12 +4953,13 @@ on_lsq_plane_ok_button_clicked         (GtkButton       *button,
 
 
 extern "C" G_MODULE_EXPORT
-void
-on_lsq_plane_dialog_destroy            (GtkWidget       *object,
-                                        gpointer         user_data)
-{
+gboolean
+on_lsq_plane_dialog_close_request(GtkWindow *window, gpointer user_data) {
+
   unset_lsq_plane_dialog();	/* which clears the plane points too */
   normal_cursor();
+  gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+  return TRUE; // Prevent the default close behavior (destruction)
 }
 
 
@@ -5127,7 +5127,7 @@ on_refine_params_use_peptide_omegas_checkbutton_toggled
   if (gtk_check_button_get_active(checkbutton)) {
     add_omega_torsion_restraints();
   } else {
-    remove_omega_torsion_restriants();
+    remove_omega_torsion_restraints();
   }
 }
 
@@ -6099,6 +6099,20 @@ on_map_opacity_hscale_value_changed(GtkRange        *range,
     fvalue = 1.0;
 
   set_solid_density_surface_opacity(imol, fvalue);
+}
+
+extern "C" G_MODULE_EXPORT
+gboolean
+map_use_view_dependent_transparency_state_set(GtkSwitch *switch_widget,
+                                              gboolean   state,
+                                              gpointer   user_data) {
+
+   int imol = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(switch_widget), "imol"));
+   if (is_valid_map_molecule(imol)) {
+      graphics_info_t::molecules[imol].do_map_view_dependent_map_transparancy = state;
+      graphics_draw();
+   }
+   return FALSE; // let the default handler update the switch state
 }
 
 
@@ -7207,47 +7221,22 @@ on_add_other_solvent_molecules_new_residue_type_button_clicked(GtkButton  *butto
                                                                gpointer    user_data) {
 
    GtkWidget *entry = widget_from_builder("add_other_solvent_molecules_new_residue_type_entry");
-   int imol = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "imol"));
-   std::cout << "DEBUG:: transfering imol " << imol << std::endl;
-   g_object_set_data(G_OBJECT(entry), "imol", GINT_TO_POINTER(imol));
    gtk_widget_set_visible(entry, TRUE);
 }
 
-#include "get-monomer.hh"
+// in create-menu-item-actions.cc
+void add_other_solvent_molecule_of_type(const std::string &type);
 
 extern "C" G_MODULE_EXPORT
 void on_add_other_solvent_molecules_new_residue_type_entry_activate(GtkEntry *entry,
                                                                     gpointer  user_data) {
 
-   // this callback is similar to the callback for the build-in residue type
-   // buttons in the dialog
+   // the same as the callback for the built-in residue type buttons in the dialog
    const char *s = gtk_editable_get_text(GTK_EDITABLE(entry));
-   graphics_info_t g;
-   std::string type(s);
-   int imol_ligand = get_monomer(type);
-   fit_to_map_by_random_jiggle(imol_ligand, "A", 1, "", 100, 2.0);
-   if (g.is_valid_model_molecule(imol_ligand)) {
-      coot::residue_spec_t rspec("A", 1, "");
-      mmdb::Residue *residue_p = g.molecules[imol_ligand].get_residue(rspec);
-      if (residue_p) {
-         mmdb::Manager *mol = g.molecules[imol_ligand].atom_sel.mol;
-         std::vector<mmdb::Residue *> v;
-         std::string alt_conf;
-         v.push_back(residue_p);
-         short int save_state = g.refinement_immediate_replacement_flag;
-         g.refinement_immediate_replacement_flag = 1;
-         coot::refinement_results_t rr = g.refine_residues_vec(imol_ligand, v, alt_conf, mol);
-         g.refinement_immediate_replacement_flag = save_state;
-         c_accept_moving_atoms();
-         delete_hydrogen_atoms(imol_ligand);
-         int imol = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "imol"));
-         if (g.is_valid_model_molecule(imol)) {
-            std::vector<atom_selection_container_t> add_molecules_at_sels;
-            add_molecules_at_sels.push_back(g.molecules[imol_ligand].atom_sel);
-            g.molecules[imol].merge_molecules(add_molecules_at_sels);
-            close_molecule(imol_ligand);
-         }
-      }
+   if (s) {
+      std::string type(s);
+      if (! type.empty())
+         add_other_solvent_molecule_of_type(type);
    }
 }
 

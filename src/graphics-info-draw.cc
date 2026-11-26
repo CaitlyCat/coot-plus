@@ -923,6 +923,11 @@ graphics_info_t::draw_model_molecules(stereo_eye_t eye) {
       molecule_class_info_t &m = molecules[ii];
       // std::cout << "draw_model_mqolecules() A " << ii << " m.draw_it " << m.draw_it << std::endl;
 
+      // glycoblocks are drawn whether or not the bonds are
+      if (m.draw_glycoblocks_flag)
+         m.glycoblocks_meshes.draw(&shader_for_meshes, &shader_for_instanced_objects, eye, mvp, model_rotation, lights,
+                                   eye_position, 1.0f, bgc, false, shader_do_depth_fog_flag, false);
+
       if (! m.draw_it) continue;
 
       // 20230827-PE this is for the new/consolidated api-based instanced meshes.
@@ -1948,6 +1953,16 @@ graphics_info_t::draw_molecules_with_shadows(stereo_eye_t eye) {
    for (int i=0; i<n_mols; i++) {
       if (is_valid_model_molecule(i)) {
          molecule_class_info_t &m = molecules[i];
+
+         // glycoblocks are drawn whether or not the bonds are
+         if (m.draw_glycoblocks_flag) {
+            shader_for_instanced_meshes_with_shadows.Use();
+            m.glycoblocks_meshes.draw_molecule_with_shadows(&shader_for_instanced_meshes_with_shadows, mvp, model_rotation_matrix, lights,
+                                                            eye_position, get_rotation_centre(), 1.0f, bg_col_v4, shader_do_depth_fog_flag,
+                                                            light_view_mvp, shadow_depthMap_texture, shadow_strength, shadow_softness,
+                                                            show_just_shadows);
+         }
+
          if (m.draw_it) {
 
             if (m.draw_model_molecule_as_lines) {
@@ -2025,6 +2040,8 @@ graphics_info_t::draw_molecules_with_shadows(stereo_eye_t eye) {
                                      shader_for_meshes_with_shadows.set_float_for_uniform("fresnel_scale", m.fresnel_settings.scale);
                                      shader_for_meshes_with_shadows.set_float_for_uniform("fresnel_power", m.fresnel_settings.power);
                                      shader_for_meshes_with_shadows.set_vec4_for_uniform("fresnel_colour", m.fresnel_settings.colour);
+                                     shader_for_meshes_with_shadows.set_bool_for_uniform("do_view_dependent_transparancy",
+                                                                                         m.do_map_view_dependent_map_transparancy);
 
                                      float opacity = m.density_surface_opacity;
 
@@ -2046,6 +2063,9 @@ graphics_info_t::draw_molecules_with_shadows(stereo_eye_t eye) {
                                                                         eye_position, get_rotation_centre(), opacity, bg_col_v4, shader_do_depth_fog_flag, light_view_mvp,
                                                                         shadow_depthMap_texture, shadow_strength, shadow_softness, show_just_shadows);
                                      }
+                                     // this shader is shared with non-map meshes, so don't leave the flag set
+                                     shader_for_meshes_with_shadows.Use();
+                                     shader_for_meshes_with_shadows.set_bool_for_uniform("do_view_dependent_transparancy", false);
                                   }
                                };
 
@@ -2531,11 +2551,15 @@ graphics_info_t::draw_molecules_other_meshes(stereo_eye_t eye, unsigned int pass
                      }
 #endif
 
+                     // a semi-transparent (blended) ribbon: draw only the front faces, otherwise the
+                     // unsorted back faces blend in patchily (stripes) and the internal caps show
+                     if (m.meshes[jj].use_blending) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
                      // if (m.meshes[jj].mesh_is_semi_transparent) glEnable(GL_BLEND);
                      m.meshes[jj].draw(&shader_for_moleculestotriangles, eye, mvp,
                                        model_rotation, lights, eye_position, rc, opacity, bg_col,
                                        wireframe_mode, do_depth_fog, show_just_shadows);
                      if (m.meshes[jj].mesh_is_semi_transparent) glDisable(GL_BLEND);
+                     if (m.meshes[jj].use_blending) glDisable(GL_CULL_FACE);
 
                   }
                   if (pass_type == PASS_TYPE_WITH_SHADOWS) {
@@ -2547,11 +2571,14 @@ graphics_info_t::draw_molecules_other_meshes(stereo_eye_t eye, unsigned int pass
                      glm::mat4 light_view_mvp = get_light_space_mvp(light_index);
                      show_just_shadows = false;
 
+                     // see above: front faces only for a semi-transparent ribbon
+                     if (m.meshes[jj].use_blending) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
                      m.meshes[jj].draw_with_shadows(&shader_for_moleculestotriangles_with_shadows, mvp,
                                                     model_rotation, lights, eye_position, rc, opacity, bg_col,
                                                     do_depth_fog, light_view_mvp,
                                                     shadow_depthMap_texture, shadow_strength,
                                                     shadow_softness, show_just_shadows);
+                     if (m.meshes[jj].use_blending) glDisable(GL_CULL_FACE);
 
                   }
                   if (pass_type == PASS_TYPE_SSAO) {
@@ -2773,6 +2800,9 @@ graphics_info_t::draw_origin_cube(stereo_eye_t eye, GtkGLArea *glarea) {
 void
 graphics_info_t::draw_rotation_centre_crosshairs(stereo_eye_t eye, GtkGLArea *glarea, unsigned int pass_type) {
 
+   // a size scale factor of 0 (or less) hides the crosshairs, e.g. for screendumps
+   if (user_defined_rotation_centre_crosshairs_size_scale_factor <= 0.0f) return;
+
    // gtk_gl_area_make_current(glarea); // needed?, no it isn't.
    GLenum err = glGetError();
    if (err) std::cout << "GL ERROR:: draw_rotation_centre_crosshairs() A0 err " << err << std::endl;
@@ -2827,7 +2857,7 @@ graphics_info_t::draw_rotation_centre_crosshairs(stereo_eye_t eye, GtkGLArea *gl
       if (! is_bb)
          line_colour = glm::vec4(1.0f - rotation_centre_cross_hairs_colour[0],
                                  1.0f - rotation_centre_cross_hairs_colour[1],
-                                 1.0f - rotation_centre_cross_hairs_colour[0],
+                                 1.0f - rotation_centre_cross_hairs_colour[2],
                                  1.0f);
 
       GLuint line_colour_uniform_location = shader_for_central_cube.line_colour_uniform_location;
@@ -3743,10 +3773,14 @@ graphics_info_t::reset_hud_buttons_size_and_position() {
    int w = allocation.width;
    int h = allocation.height;
 
+   // keep each button in its own slot (the order in hud_button_info is not the slot order)
    for (unsigned int i=0; i<hud_button_info.size(); i++) {
       auto &button = hud_button_info[i];
-      button.set_scales_and_position_offset(i, w, h);
+      button.set_scales_and_position_offset(button.position_offset_index, w, h);
    }
+   // the labels use hud_button_info directly, the button backgrounds need the instance data updated.
+   // This is called from the glarea resize callback, so the GL context is current.
+   mesh_for_hud_buttons.update_instancing_buffer_data(hud_button_info);
 }
 
 // static
@@ -4843,7 +4877,8 @@ graphics_info_t::render(bool to_screendump_framebuffer_flag, const std::string &
       gtk_widget_get_allocation(GTK_WIDGET(gl_area), &allocation);
       int w = allocation.width;
       int h = allocation.height;
-      unsigned int sf = framebuffer_scale;
+      // include the display scale factor (2 on Retina) so that the screendump is at device-pixel resolution
+      unsigned int sf = framebuffer_scale * gtk_widget_get_scale_factor(GTK_WIDGET(gl_area));
 
       bool show_basic_scene_state = (displayed_image_type == SHOW_BASIC_SCENE);
 
@@ -6152,7 +6187,7 @@ graphics_info_t::setup_draw_for_boids() {
       meshed_generic_display_object m;
       coot::colour_holder col(0.4, 0.5, 0.6);
       std::pair<glm::vec3, glm::vec3> start_end(glm::vec3(1.95,0,0), glm::vec3(-1.95,0,0));
-      m.add_cone(start_end, col, 3.0, 0.0, 24, false, true,
+      m.add_cone(start_end, col, 1.0, 0.0, 24, false, true,
                  meshed_generic_display_object::FLAT_CAP,
                  meshed_generic_display_object::FLAT_CAP);
       mesh_for_boids = m.mesh;

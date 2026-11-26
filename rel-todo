@@ -1,47 +1,153 @@
 --- Items---
 
-o "Worms by B-factor" - should not be difficult.
+o Look at the molecular symmetry problem from Lucrezia
 
-o multi-residue for copy-fragment "//A/90,92" didn't work
-  Nor did "//A/90||//A/92"
+o use the raytracer to make images - check the debug output
 
-o Oli: the preference to switch off active map on dragging
-  seems to be broken - it should update the map after mouse
-  release, but instead it is only happening when update_maps
-  is called explicitly (e.g. during recontouring)
+o fix the agentic coot checkpoint error. Needs to be tracked down.
 
-o let me change the moving-atoms bond thickness
+o Clement: libcootapi: sanity check of molecule at save time?
+
+o see bug.txt from Jordan
+
+o look at chi-5 in tutorial model and data in molprobity next
+
+o when adding a ligand, stop adding another ligand on top
+* Done.
+
+o allow me to change the cylinder thickness for Tube representation.
+* Done
+
+o Make bendy helices - 2nd order or third order?
+
+o check these dictionaries for Oliver:
+  VIA 468 NAD and SD1
+
+o what kind of density sampling does fit-helix do?
+* Linear now.
+
+o make baton-building work again.
+
+o Simple/RDKit-based restraints API in chapi
+
+o links display for cho in mmcif?
+
+o get glycoblocks from Stuart?
+
+o simple screendump on MacBook pro seems to write at half resolution?
+* Done.
+
+o user-defined cylindrical helix width
+* Done.
+
+o draw side-chain of a beta-strand (in particular) with a
+  bond to the "CA"
+
+o full screen, edit restraints -> atom table gone?
+* Done.
+
+o Can we have a uniform bond colour that is different to the
+  atom colours?
+
+o add hydrogen atoms to just this residue - gui item please
+
+o what happened to HexaPro?
+  https://www.science.org/doi/10.1126/science.abd0826
+
+o add helix here: renumber helix so that it always starts at 1.
+* Done.
+
+o add helix here for the tutorial. Fails when map is masked.
+  straight: works, blur: works, blur and mask: fail
+* Done.
+
+o 4n6f and bendix helices - look at the loops
+
+o save state should save unwritten masked maps
+
+o check coenzyme A cation-pi stacking
+
+o is symmetry (SYMINFO/syminfo.lib) tested in the python tests?
+
+o experiment: molprobity on tutorial model before and after
+  doing the tutorial (chain refine with hydrogen atoms added)
+
+o Impact statement for Moorhen.
+
+o Oli idea: search by sequence. Allow wild-card and ambiguity
+  e.g. (A/S). Consider sequon.
+
+o colour residues by atom overlap badness (use user-defined
+  colours of course)
 
 o let me change the moving atoms hue/lighting(?)
 
 o colour residues by atom overlap badness
   (use user-defined colours of course)
 
-o Oli idea: search by sequence. Allow wildcard
+o Oli idea: search by sequence. Allow wild-card
   and ambiguity e.g. (A/S). Consider sequon.
 
 o in "Open Recent" - show me the path (or a path
   fragment so that I can see that I am loading
   "refine.pdb" from the right directory)
 
-o user-defined colour in CA+sidechain mode?
+o user-defined colour in CA+side-chain mode?
   Useful for colour-by-rotamer-probability
 
-o Search monomer library kill and reopen
+o make a smoother copy of a difference map should
+  preserve the difference map status in the new map.
+* Done.
 
-o likewise Environment distances
+o look at FAD with hydrogens added pdb5s9s.ent,
+  oxygen-to-hydrogen bond needs an end-cap
+* I don't know what I meant.
 
-o "Let me remove a module menu" - Oli
+o Oli: the preference to switch off active map on dragging
+  seems to be broken - it should update the map after mouse
+  release, but instead it is only happening when update_maps
+  is called explicitly (e.g. during recontouring)
+* Done.
+
+o multi-residue for copy-fragment "//A/90,92" didn't work
+  Nor did "//A/90||//A/92"
+* It does work. Maybe fumbled input or old coot.
 
 o Contact dots during refinement, once added can no longer be undone (in the gui)
-
-o find arp warp persistance density for ligands
+* Done.
 
 o Add an end-cap to worms mesh
+* Done.
 
 o EJD: Let me undock the validation buttons.
+* Done.
 
-o Impact statement for Moorhen.
+o Search monomer library kill and reopen
+* Fixed.
+
+o likewise Environment distances
+* Fixed.
+
+o in "Open Recent" - show me the path (or a path fragment so that
+  I can see that I am loading "refine.pdb" from the right directory)
+* Done.
+
+o "Let me remove a module menu" - Oli
+* Done.
+
+o Oli: let me change the moving-atoms bond thickness
+* Done.
+
+o Oli: let me change the moving atoms hue/lighting(?)
+* Notes for later.
+
+o "Worms by B-factor" - should not be difficult.
+* Handed over to Lucrezia
+
+o Look at hydrogen atom addition code for addition 5a90 215 A.
+
+o list for Atom Overlaps (only)
+* Done.
 
 o add (back) alpha helix restraints
 * Done.
@@ -183,9 +289,6 @@ o 5s9s FAD A 501 OA1 and O2A should have the same hydrogen bond type
    (acceptor) see ener_lib.cif for O and OP. So the RDKit output
    needs to be augmented.
 
-o look at FAD with hydrogens added pdb5s9s.ent,
-  oxygen-to-hydrogen bond needs an end-cap
-
 o add to the api - add dotted/dashed line between points
   in ospray rendering
 * Meh. At some stage.
@@ -276,9 +379,6 @@ o dnotes: Look at cowcat jholton github
 
 o for jordan: for each chi angle set for each residue
   type find the number of observations in that basin
-
-o make a smoother copy of a difference map should
-  preserrve the difference map status in the new map.
 
 o for chapi scripts, chapi.spec_to_cid() would be convenient.
 

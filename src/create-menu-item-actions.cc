@@ -45,6 +45,7 @@
 #include "widget-from-builder.hh"
 #include "c-interface-gui.hh" // set transient for main window
 #include "cc-interface-scripting.hh"  // move this up
+#include "command-palette.hh"
 #include "cc-interface.hh"
 #include "fit-loop-gui.hh"
 #include "read-molecule.hh" // 20230621-PE now with std::string args
@@ -2190,9 +2191,34 @@ void carbohydrate_add_complex_mammal_action(G_GNUC_UNUSED GSimpleAction *simple_
 
 }
 
-void add_ccp4_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+// The module actions have a boolean state, so that the Modules menu shows them as check items.
+// The module's toolbar menubutton is stored on the action.
+//
+// return true if the module was shown (and its menubutton has now been removed).
+bool remove_module_menubutton_if_shown(GSimpleAction *simple_action) {
+
+   GtkWidget *menubutton = static_cast<GtkWidget *>(g_object_get_data(G_OBJECT(simple_action), "module-menubutton"));
+   if (menubutton) {
+      GtkWidget *toolbar_hbox = widget_from_builder("main_window_toolbar_hbox");
+      gtk_box_remove(GTK_BOX(toolbar_hbox), menubutton); // the box held the only reference
+      g_object_set_data(G_OBJECT(simple_action), "module-menubutton", nullptr);
+      g_simple_action_set_state(simple_action, g_variant_new_boolean(FALSE));
+      return true;
+   }
+   return false;
+}
+
+void set_module_menubutton(GSimpleAction *simple_action, GtkWidget *menubutton) {
+
+   g_object_set_data(G_OBJECT(simple_action), "module-menubutton", menubutton);
+   g_simple_action_set_state(simple_action, g_variant_new_boolean(TRUE));
+}
+
+void add_ccp4_module_action(GSimpleAction *simple_action,
                             G_GNUC_UNUSED GVariant *parameter,
                             G_GNUC_UNUSED gpointer user_data) {
+
+   if (remove_module_menubutton_if_shown(simple_action)) return;
 
    // Pythonic:
    //
@@ -2223,6 +2249,7 @@ void add_ccp4_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    GtkWidget *popover = gtk_popover_menu_new_from_model(model);
    gtk_menu_button_set_popover(GTK_MENU_BUTTON(ccp4_menubutton), popover);
 
+   set_module_menubutton(simple_action, ccp4_menubutton);
    graphics_info_t::graphics_grab_focus();
 }
 
@@ -2329,6 +2356,10 @@ void cryo_em_make_masked_maps_action(G_GNUC_UNUSED GSimpleAction *simple_action,
       int imol_map = imol_refinement_map();
       if (is_valid_map_molecule(imol_map)) {
          make_masked_maps_split_by_chain(imol, imol_map);
+      } else {
+         std::string m("Refinement Map not set");
+         add_status_bar_text(m);
+         ephemeral_overlay_label(m.c_str());
       }
    }
    graphics_info_t::graphics_grab_focus();
@@ -2770,6 +2801,34 @@ void jiggle_fit_molecule_with_fourier_filtering_action(G_GNUC_UNUSED GSimpleActi
    graphics_info_t::graphics_grab_focus();
 }
 
+void patmos_jiggle_fit_chain_with_fourier_filtering_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                                                           G_GNUC_UNUSED GVariant *parameter,
+                                                           G_GNUC_UNUSED gpointer user_data) {
+
+   int n_trials = 1000;
+   float scale_factor = 3.0;
+   float blur_b_factor = 300.0;
+
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > pp = active_atom_spec();
+   if (pp.first) {
+      int imol = pp.second.first;
+      std::string chain_id = pp.second.second.chain_id;
+      int imol_map = imol_refinement_map();
+      if (is_valid_map_molecule(imol_map)) {
+         // call molecular placement function for the active atom's chain only,
+         // n_top_translation = 6, n_top_rotation = 6
+         molecular_replacement_fit_about_screen_centre(imol, chain_id.c_str(), 6, 6);
+         fit_chain_to_map_by_random_jiggle_and_blur(imol, chain_id.c_str(), n_trials, scale_factor, blur_b_factor);
+      } else {
+         graphics_info_t::ephemeral_overlay_label("Fitting Map Not Set");
+      }
+   } else {
+      std::cout << "WARNING:: No active atom found" << std::endl;
+      logger.log(log_t::WARNING, "No active atom");
+   }
+   graphics_info_t::graphics_grab_focus();
+}
+
 void patmos_jiggle_fit_molecule_with_fourier_filtering_action(G_GNUC_UNUSED GSimpleAction *simple_action,
                                                               G_GNUC_UNUSED GVariant *parameter,
                                                               G_GNUC_UNUSED gpointer user_data) {
@@ -2784,7 +2843,7 @@ void patmos_jiggle_fit_molecule_with_fourier_filtering_action(G_GNUC_UNUSED GSim
       int imol_map = imol_refinement_map();
       if (is_valid_map_molecule(imol_map)) {
          // call molecular placement function, n_top_translation = 6, n_top_rotation = 6
-         molecular_replacement_fit_about_screen_centre(imol, 6, 6);
+         molecular_replacement_fit_about_screen_centre(imol, "", 6, 6); // "": the whole molecule
          fit_molecule_to_map_by_random_jiggle_and_blur(imol, n_trials, scale_factor, blur_b_factor);
       } else {
          graphics_info_t::ephemeral_overlay_label("Fitting Map Not Set");
@@ -2845,6 +2904,8 @@ void add_cryo_em_module_action(GSimpleAction *simple_action,
    // jiggle-fit mol with fourier filtering
    // sharpen-blur map
 
+   if (remove_module_menubutton_if_shown(simple_action)) return;
+
    GtkWidget *toolbar_hbox = widget_from_builder("main_window_toolbar_hbox");
    GtkWidget *menubutton = gtk_menu_button_new();
    gtk_menu_button_set_label(GTK_MENU_BUTTON(menubutton), "Cryo-EM");
@@ -2855,7 +2916,7 @@ void add_cryo_em_module_action(GSimpleAction *simple_action,
    GtkWidget *popover = gtk_popover_menu_new_from_model(model);
    gtk_menu_button_set_popover(GTK_MENU_BUTTON(menubutton), popover);
 
-   g_simple_action_set_enabled(simple_action,FALSE);
+   set_module_menubutton(simple_action, menubutton);
    graphics_info_t::graphics_grab_focus();
 
 }
@@ -2878,6 +2939,8 @@ void add_ligand_module_action(GSimpleAction *simple_action,
    // Show Chemical Features
    // Quick Ligand Validate
 
+   if (remove_module_menubutton_if_shown(simple_action)) return;
+
    GtkWidget *toolbar_hbox = widget_from_builder("main_window_toolbar_hbox");
    GtkWidget *menubutton = gtk_menu_button_new();
    gtk_menu_button_set_label(GTK_MENU_BUTTON(menubutton), "Ligand");
@@ -2888,7 +2951,7 @@ void add_ligand_module_action(GSimpleAction *simple_action,
    GtkWidget *popover = gtk_popover_menu_new_from_model(model);
    gtk_menu_button_set_popover(GTK_MENU_BUTTON(menubutton), popover);
 
-   g_simple_action_set_enabled(simple_action,FALSE);
+   set_module_menubutton(simple_action, menubutton);
    graphics_info_t::graphics_grab_focus();
 }
 
@@ -2917,6 +2980,8 @@ void add_restraints_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    safe_python_command("gui_prosmart.add_module_restraints()");
 #endif
 
+   if (remove_module_menubutton_if_shown(simple_action)) return;
+
    GtkWidget *toolbar_hbox = widget_from_builder("main_window_toolbar_hbox");
    GtkWidget *menubutton = gtk_menu_button_new();
    gtk_menu_button_set_label(GTK_MENU_BUTTON(menubutton), "Restraints");
@@ -2927,7 +2992,7 @@ void add_restraints_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    GtkWidget *popover = gtk_popover_menu_new_from_model(model);
    gtk_menu_button_set_popover(GTK_MENU_BUTTON(menubutton), popover);
 
-   g_simple_action_set_enabled(simple_action,FALSE);
+   set_module_menubutton(simple_action, menubutton);
    graphics_info_t::graphics_grab_focus();
 }
 
@@ -2941,11 +3006,7 @@ void add_refine_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    safe_python_command("coot_gui.add_module_refine()");
 #endif
 
-   // I only need to do this if it has not been done before
-   // so here, check if the menubutton already exists.
-   // How do I do that?
-   //
-   // 20250225-PE Ah, the menu item in the pop-up become insensitve - nice.
+   if (remove_module_menubutton_if_shown(simple_action)) return;
 
    if (true) {
       GtkWidget *toolbar_hbox = widget_from_builder("main_window_toolbar_hbox");
@@ -3010,6 +3071,10 @@ void add_refine_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
          return static_cast<gboolean>(FALSE);
       };
 
+      if (graphics_info_t::do_coot_probe_dots_during_refine_flag)
+         gtk_switch_set_active(GTK_SWITCH(switch_contact_dots), TRUE);
+      if (graphics_info_t::draw_it_for_moving_atoms_restraints_graphics_object_user_control)
+         gtk_switch_set_active(GTK_SWITCH(switch_GM_restraints), TRUE);
       if (graphics_info_t::do_intermediate_atoms_rama_markup)
          gtk_switch_set_active(GTK_SWITCH(switch_rama), TRUE);
       if (graphics_info_t::do_intermediate_atoms_rota_markup)
@@ -3050,9 +3115,9 @@ void add_refine_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
       gtk_widget_set_margin_start(box, 6);
       gtk_widget_set_margin_end(box, 6);
       gtk_widget_set_size_request(popover, 310, 150);
+      set_module_menubutton(simple_action, menubutton);
    }
 
-   g_simple_action_set_enabled(simple_action, FALSE);
    graphics_info_t::graphics_grab_focus();
 }
 
@@ -3065,9 +3130,11 @@ void add_shelx_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    graphics_info_t::graphics_grab_focus();
 }
 
-void add_views_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+void add_views_module_action(GSimpleAction *simple_action,
                              G_GNUC_UNUSED GVariant *parameter,
                              G_GNUC_UNUSED gpointer user_data) {
+
+   if (remove_module_menubutton_if_shown(simple_action)) return;
 
    // Add a button in the toolbar where we can add a ligand popupdialog
    GtkWidget *toolbar_hbox = graphics_info_t::get_widget_from_builder("main_window_toolbar_hbox"); // toolbar style hbox
@@ -3141,6 +3208,7 @@ void add_views_module_action(G_GNUC_UNUSED GSimpleAction *simple_action,
    gtk_box_append(GTK_BOX(outer_box), views_hbox);
 
    gtk_box_append(GTK_BOX(toolbar_hbox), view_menubutton);
+   set_module_menubutton(simple_action, view_menubutton);
 
 }
 
@@ -3558,6 +3626,64 @@ void add_an_atom_action(G_GNUC_UNUSED GSimpleAction *simple_action,
 
 #include "get-monomer.hh"
 
+// Make a molecule of the given residue type, fit it to the map at the screen centre and
+// merge it into the molecule that is (now) selected in the "Add Other Solvent Molecules"
+// dialog - unless there is something there already.
+//
+// Used by the residue-type buttons and the new-residue-type entry of that dialog.
+//
+void add_other_solvent_molecule_of_type(const std::string &type) {
+
+   graphics_info_t g;
+
+   // the target molecule is that of the combobox now, not when the buttons were made.
+   GtkWidget *combobox = widget_from_builder("add_other_solvent_molecules_comboboxtext");
+   if (! combobox) return;
+   int imol = my_combobox_get_imol(GTK_COMBO_BOX(combobox));
+   if (! g.is_valid_model_molecule(imol)) {
+      logger.log(log_t::WARNING, logging::function_name_t(__FUNCTION__),
+                 "no valid model molecule to which to add", type);
+      return;
+   }
+
+   int imol_ligand = get_monomer(type);
+   if (! g.is_valid_model_molecule(imol_ligand)) return;
+
+   fit_to_map_by_random_jiggle(imol_ligand, "A", 1, "", 100, 2.0);
+   coot::residue_spec_t rspec("A", 1, "");
+   mmdb::Residue *residue_p = g.molecules[imol_ligand].get_residue(rspec);
+   if (residue_p) {
+      mmdb::Manager *mol = g.molecules[imol_ligand].atom_sel.mol;
+      std::vector<mmdb::Residue *> v;
+      std::string alt_conf;
+      v.push_back(residue_p);
+      short int save_state = g.refinement_immediate_replacement_flag;
+      g.refinement_immediate_replacement_flag = 1;
+      g.refine_residues_vec(imol_ligand, v, alt_conf, mol);
+      g.refinement_immediate_replacement_flag = save_state;
+      c_accept_moving_atoms();
+      delete_hydrogen_atoms(imol_ligand);
+
+      // deleting the hydrogen atoms may have remade the residues, so look it up again
+      residue_p = g.molecules[imol_ligand].get_residue(rspec);
+      bool something_here_already = false;
+      if (residue_p)
+         something_here_already =
+            coot::residue_overlaps_atoms_in_molecule(residue_p, g.molecules[imol].atom_sel.mol, 1.0f);
+
+      if (something_here_already) {
+         std::string m = "There is something here already - " + type + " was not added";
+         logger.log(log_t::INFO, logging::function_name_t(__FUNCTION__), m);
+         g.add_status_bar_text(m);
+      } else {
+         std::vector<atom_selection_container_t> add_molecules_at_sels;
+         add_molecules_at_sels.push_back(g.molecules[imol_ligand].atom_sel);
+         g.molecules[imol].merge_molecules(add_molecules_at_sels);
+      }
+   }
+   close_molecule(imol_ligand);
+}
+
 void add_other_solvent_molecules_action(G_GNUC_UNUSED GSimpleAction *simple_action,
                                         G_GNUC_UNUSED GVariant *parameter,
                                         G_GNUC_UNUSED gpointer user_data) {
@@ -3575,36 +3701,9 @@ void add_other_solvent_molecules_action(G_GNUC_UNUSED GSimpleAction *simple_acti
                                        return vec;
                                     };
 
-   auto type_button_callback = +[] (GtkButton *b, gpointer data) {
-
-      graphics_info_t g;
+   auto type_button_callback = +[] (G_GNUC_UNUSED GtkButton *b, gpointer data) {
       std::string *s = static_cast<std::string *>(data);
-      std::string type = *s;
-      int imol_ligand = get_monomer(type);
-      fit_to_map_by_random_jiggle(imol_ligand, "A", 1, "", 100, 2.0);
-      if (g.is_valid_model_molecule(imol_ligand)) {
-	 coot::residue_spec_t rspec("A", 1, "");
-	 mmdb::Residue *residue_p = g.molecules[imol_ligand].get_residue(rspec);
-	 if (residue_p) {
-	    mmdb::Manager *mol = g.molecules[imol_ligand].atom_sel.mol;
-	    std::vector<mmdb::Residue *> v;
-	    std::string alt_conf;
-	    v.push_back(residue_p);
-	    short int save_state = g.refinement_immediate_replacement_flag;
-	    g.refinement_immediate_replacement_flag = 1;
-	    coot::refinement_results_t rr = g.refine_residues_vec(imol_ligand, v, alt_conf, mol);
-	    g.refinement_immediate_replacement_flag = save_state;
-	    c_accept_moving_atoms();
-	    delete_hydrogen_atoms(imol_ligand);
-	    int imol = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "imol"));
-	    if (g.is_valid_model_molecule(imol)) {
-	       std::vector<atom_selection_container_t> add_molecules_at_sels;
-	       add_molecules_at_sels.push_back(g.molecules[imol_ligand].atom_sel);
-	       g.molecules[imol].merge_molecules(add_molecules_at_sels);
-	       close_molecule(imol_ligand);
-	    }
-	 }
-      }
+      add_other_solvent_molecule_of_type(*s);
    };
 
    GtkWidget *dialog = widget_from_builder("add_other_solvent_molecules_dialog");
@@ -3635,13 +3734,10 @@ void add_other_solvent_molecules_action(G_GNUC_UNUSED GSimpleAction *simple_acti
 		  if (new_idx >= 0) {
 		     auto p = g.Geom_p()->get_monomer_name(type, imol_enc);
 		     if (p.first) {
-			GtkWidget *combobox = widget_from_builder("add_other_solvent_molecules_comboboxtext");
-			int imol = my_combobox_get_imol(GTK_COMBO_BOX(combobox));
 			std::string l = type + " " + p.second;
 			GtkWidget *button = gtk_button_new_with_label(l.c_str());
 			gtk_box_append(GTK_BOX(box), button);
 			std::string *t = new std::string(type);
-			g_object_set_data(G_OBJECT(button), "imol", GINT_TO_POINTER(imol));
 			g_signal_connect(G_OBJECT(button), "clicked", G_CALLBACK(type_button_callback), t);
 		     } else {
 			logger.log(log_t::WARNING, logging::function_name_t(__FUNCTION__),
@@ -5021,6 +5117,20 @@ void highly_coordinates_waters_action(G_GNUC_UNUSED GSimpleAction *simple_action
 
 #include "dynamic-validation.hh"
 
+void atom_overlaps_table_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                                G_GNUC_UNUSED GVariant *parameter,
+                                G_GNUC_UNUSED gpointer user_data) {
+
+   graphics_info_t g;
+   std::pair<bool, std::pair<int, coot::atom_spec_t> > pp = g.active_atom_spec_simple();
+   if (pp.first) {
+
+      int imol = pp.second.first;
+      atom_overlaps_table_internal(imol);
+   }
+}
+
+
 void overlaps_peptides_cbeta_ramas_and_rotas_action(G_GNUC_UNUSED GSimpleAction *simple_action,
                                                     G_GNUC_UNUSED GVariant *parameter,
                                                     G_GNUC_UNUSED gpointer user_data) {
@@ -5139,6 +5249,20 @@ coot_shortcuts_action(G_GNUC_UNUSED GSimpleAction *simple_action,
       set_transient_for_main_window(window);
       gtk_widget_set_visible(window, TRUE);
    }
+}
+
+void
+command_palette_action(G_GNUC_UNUSED GSimpleAction *simple_action,
+                       G_GNUC_UNUSED GVariant *parameter,
+                       G_GNUC_UNUSED gpointer user_data) {
+
+   // Show the palette in an idle callback: when the menu closes, it gives the focus back to the
+   // graphics, and the palette hides itself when it loses the focus.
+   auto show_cb = +[] (G_GNUC_UNUSED gpointer data) {
+      show_command_palette();
+      return gboolean(G_SOURCE_REMOVE);
+   };
+   g_idle_add(show_cb, nullptr);
 }
 
 
@@ -6784,6 +6908,19 @@ create_actions(GtkApplication *application) {
       g_signal_connect(simple_action, "activate", G_CALLBACK(action_function), NULL);
    };
 
+   // an action with a boolean state - the menu items that use it (without a "target"
+   // attribute) are drawn as check items. The action function sets the state.
+   auto add_stateful_bool_action = [application] (const std::string &action_name,
+                                                  void (*action_function) (GSimpleAction *simple_action,
+                                                                           GVariant *parameter,
+                                                                           gpointer user_data)) {
+
+      GSimpleAction *simple_action = g_simple_action_new_stateful(action_name.c_str(), NULL,
+                                                                  g_variant_new_boolean(FALSE));
+      g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(simple_action));
+      g_signal_connect(simple_action, "activate", G_CALLBACK(action_function), NULL);
+   };
+
 
    // File
 
@@ -6893,16 +7030,16 @@ create_actions(GtkApplication *application) {
 
    // Calculate -> Modules
 
-   add_action(        "add_ccp4_module_action",         add_ccp4_module_action);
-   add_action("add_carbohydrate_module_action", add_carbohydrate_module_action);
-   add_action(     "add_cryo_em_module_action",      add_cryo_em_module_action);
-   add_action(    "add_prosmart_module_action",     add_prosmart_module_action);
-   add_action(      "add_ligand_module_action",       add_ligand_module_action);
-   add_action(      "add_rcrane_module_action",       add_rcrane_module_action);
-   add_action(  "add_restraints_module_action",   add_restraints_module_action);
-   add_action(      "add_refine_module_action",       add_refine_module_action);
-   add_action(       "add_shelx_module_action",        add_shelx_module_action);
-   add_action(       "add_views_module_action",        add_views_module_action);
+   add_stateful_bool_action(        "add_ccp4_module_action",         add_ccp4_module_action);
+   add_action(              "add_carbohydrate_module_action", add_carbohydrate_module_action);
+   add_stateful_bool_action(     "add_cryo_em_module_action",      add_cryo_em_module_action);
+   add_action(                  "add_prosmart_module_action",     add_prosmart_module_action);
+   add_stateful_bool_action(      "add_ligand_module_action",       add_ligand_module_action);
+   add_action(                    "add_rcrane_module_action",       add_rcrane_module_action);
+   add_stateful_bool_action(  "add_restraints_module_action",   add_restraints_module_action);
+   add_stateful_bool_action(      "add_refine_module_action",       add_refine_module_action);
+   add_action(                     "add_shelx_module_action",        add_shelx_module_action);
+   add_stateful_bool_action(       "add_views_module_action",        add_views_module_action);
 
    // Calculate -> NCS
 
@@ -7038,6 +7175,7 @@ create_actions(GtkApplication *application) {
    add_action(               "ramachandran_plot_action",                ramachandran_plot_action);
    add_action(                "alignment_vs_pir_action",                 alignment_vs_pir_action);
    add_action(                  "atoms_overlaps_action",                   atoms_overlaps_action);
+   add_action(             "atom_overlaps_table_action",              atom_overlaps_table_action);
    add_action(             "validation_outliers_action",              validation_outliers_action);
    add_action(           "refmac_log_validation_action",            refmac_log_validation_action);
    add_action(       "highly_coordinates_waters_action",        highly_coordinates_waters_action);
@@ -7051,6 +7189,7 @@ create_actions(GtkApplication *application) {
    add_action("remarks_browser_action", remarks_browser_action);
    add_action("about_coot_action", about_coot_action);
    add_action("coot_shortcuts_action", coot_shortcuts_action);
+   add_action("command_palette_action", command_palette_action);
 
    // Refine menu
 
@@ -7173,6 +7312,7 @@ create_actions(GtkApplication *application) {
    add_action("jiggle_fit_molecule_simple_action",                 jiggle_fit_molecule_simple_action);
    add_action("jiggle_fit_chain_with_fourier_filtering_action",    jiggle_fit_chain_with_fourier_filtering_action);
    add_action("jiggle_fit_molecule_with_fourier_filtering_action", jiggle_fit_molecule_with_fourier_filtering_action);
+   add_action("patmos_jiggle_fit_chain_with_fourier_filtering_action",    patmos_jiggle_fit_chain_with_fourier_filtering_action);
    add_action("patmos_jiggle_fit_molecule_with_fourier_filtering_action", patmos_jiggle_fit_molecule_with_fourier_filtering_action);
 
    add_action("vertex_gradients_for_map_normals_action",           vertex_gradients_for_map_normals_action);

@@ -41,7 +41,7 @@ pkginclude_HEADERS = peak-search.hh coot-trim.hh \
 	coot_shiftfield.h shiftfield.h fib-sphere.hh cis-peptide-info.hh \
 	pepflip-using-difference-map.hh blob-line.hh shape-types.hh shapes.hh \
         polar-atoms.hh 3d-texture.hh fragment-container.hh map-index.hh \
-        atom-tree.hh jed-flip.hh atom-vertex.hh merge-C-and-N-terminii.hh simple-mesh.hh vertex.hh g_triangle.hh \
+        atom-tree.hh jed-flip.hh atom-vertex.hh merge-C-and-N-terminii.hh simple-mesh.hh textured-mesh.hh vertex.hh g_triangle.hh \
 	cylinder.hh cylinder-with-rotation-translation.hh oct.hh prideout-octasphere.hh cmtz-interface.hh \
         mtz-column-auto-read.hh pugixml.hpp pugiconfig.hpp find-water-baddies.hh voidp-buffer.hh parse-pisa.hh \
         diff-diff-map-peaks.hh tiny_gltf.h json.hpp \
@@ -60,7 +60,7 @@ AM_CPPFLAGS = \
 	$(GEMMI_CXXFLAGS)    \
 	$(CLIPPER_CXXFLAGS)  \
 	$(SQLITE3_CFLAGS)    \
-	$(GEMMI_SQLITE_CFLAGS) \
+	$(ACEDRG_SQLITE_CXXFLAGS) \
 	$(MMDB_CXXFLAGS)     \
         $(CAIRO_CFLAGS)      \
 	$(gsl_CFLAGS)	     \
@@ -90,7 +90,7 @@ libcoot_coord_utils_la_SOURCES = coot-coord-utils.cc coot-coord-utils-mmdb-free.
 	contacts-by-bricks.cc stack-and-pair.cc fast-eigens.cc strand-fragments.cc sfcalc-genmap.cc \
 	cablam-markup.cc coot_shiftfield.cpp shiftfield.cpp fib-sphere.cc polar-atoms.cc \
 	3d-texture.cc merge-molecules.cc fragment-container.cc mutate.cc ptm-database.cc \
-	cylinder.cc cylinder-with-rotation-translation.cc oct.cc prideout-octasphere.cc simple-mesh.cc \
+	cylinder.cc cylinder-with-rotation-translation.cc oct.cc prideout-octasphere.cc simple-mesh.cc textured-mesh.cc \
 	shapes.cc cmtz-interface.cc pugixml.cpp parse-pisa.cc gltf-export.cc pae.cc \
 	gl-matrix.cc gl-matrix-eigensystem.cc coot-align.cc grid-balls.cc dict-link-info.cc \
 	cremer-pople.cc inchikey-store.cc cylinder-utils.cc nef-utils.cc gaussian-atom-map-for-mask.cc \
@@ -192,11 +192,17 @@ check_PROGRAMS = test-h-bonds testshelxreader test-hole test-elastic \
 		 test-dirichlet-process test-born test-gmm test-nef-utils test-zernike \
 		 test-zernike-params test-zernike-nxmap test-zernike-search \
 		 test-coord-utils test-coord-utils-gemmi test-servalcat-refine-progress
+if MAKE_ACEDRG_SQLITE
+check_PROGRAMS += test-acedrg-sqlite-tables
+endif
 
 # wrong build order - delete from make check for now.
 # test-emma test-convolute test-coot-utils test-segmap
 
 bin_PROGRAMS = coot-mmrrcc
+if MAKE_ACEDRG_SQLITE
+bin_PROGRAMS += coot-make-acedrg-sqlite
+endif
 
 # test_zo_chi_table_SOURCES = test-zo-chi-table.cc
 
@@ -219,20 +225,20 @@ coot_mmrrcc_LDADD = ./libcoot-map-utils.la \
 	$(top_builddir)/utils/libcoot-utils.la           \
 	$(CLIPPER_LIBS)
 
-# coot_make_acedrg_sqlite_SOURCES = make-acedrg-sqlite.cc
-# coot_make_acedrg_sqlite_LDADD = ./libcoot-coord-utils.la \
-# 	$(top_builddir)/lidia-core/libcoot-lidia-core.la \
-# 	$(top_builddir)/geometry/libcoot-geometry.la     \
-# 	$(top_builddir)/utils/libcoot-utils.la           \
-# 	$(CLIPPER_LIBS) $(GEMMI_LIBS) $(SQLITE3_LIBS)
+coot_make_acedrg_sqlite_SOURCES = make-acedrg-sqlite.cc
+coot_make_acedrg_sqlite_LDADD = ./libcoot-coord-utils.la \
+	$(top_builddir)/lidia-core/libcoot-lidia-core.la \
+	$(top_builddir)/geometry/libcoot-geometry.la     \
+	$(top_builddir)/utils/libcoot-utils.la           \
+	$(CLIPPER_LIBS) $(GEMMI_LIBS) $(SQLITE3_LIBS)
 
-# test_acedrg_sqlite_tables_SOURCES = test-acedrg-sqlite-tables.cc
-# test_acedrg_sqlite_tables_LDADD = $(GEMMI_LIBS) \
-# 	./libcoot-coord-utils.la \
-# 	$(top_builddir)/lidia-core/libcoot-lidia-core.la \
-# 	$(top_builddir)/geometry/libcoot-geometry.la     \
-# 	$(top_builddir)/utils/libcoot-utils.la           \
-# 	$(CLIPPER_LIBS) $(SQLITE3_LIBS)
+test_acedrg_sqlite_tables_SOURCES = test-acedrg-sqlite-tables.cc
+test_acedrg_sqlite_tables_LDADD = $(GEMMI_LIBS) \
+	./libcoot-coord-utils.la \
+	$(top_builddir)/lidia-core/libcoot-lidia-core.la \
+	$(top_builddir)/geometry/libcoot-geometry.la     \
+	$(top_builddir)/utils/libcoot-utils.la           \
+	$(CLIPPER_LIBS) $(SQLITE3_LIBS)
 
 make_cablam_like_stats_SOURCES = make-cablam-like-stats.cc
 
@@ -496,4 +502,9 @@ dictionary_atom_types_LDADD = \
 # cache dir (design doc 2026-08-14-acedrg-sqlite-tables-in-coot-design.md).
 # --if-missing: skips if the DB already exists and exits 0 on failure -
 # "it is OK if this run fails".
-# -./coot-make-acedrg-sqlite$(EXEEXT) --if-missing $(ACEDRG_TABLES_DIR)
+if MAKE_ACEDRG_SQLITE
+if HAVE_ACEDRG_TABLES_DIR
+all-local: coot-make-acedrg-sqlite$(EXEEXT)
+	-./coot-make-acedrg-sqlite$(EXEEXT) --if-missing $(ACEDRG_TABLES_DIR)
+endif
+endif

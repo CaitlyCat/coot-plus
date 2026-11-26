@@ -40,6 +40,7 @@
 #include "widget-from-builder.hh"
 #include "coot-plus-ui.hh"
 #include "coot-plus-ruler.hh"
+#include "command-palette.hh" // Coot's menu search: "/" and About > Search Menus... open the Coot+ search
 #include "coot-utils/json.hpp"
 #include "session-info.hh"
 #include "read-molecule.hh"
@@ -67,6 +68,7 @@ struct command_t {
    std::string description; // what it does (hover text and search results) - verified in the source
    std::string icon;        // icon name (Coot pixmaps), may be empty
    std::string toolbar_id;  // builder id, for toolbar buttons
+   std::string api_function; // the scripting function Coot names for this menu item ("api-function" in coot.ui)
    std::function<void()> run;
 };
 
@@ -364,7 +366,16 @@ void add_menu_model(GMenuModel *model, const std::string &path) {
             g_variant_unref(target);
          }
          c.keywords = keywords_for(l);
-         if (c.action != "app.command_search_action" && !have_command(c.action, c.target))
+         gchar *api = nullptr;   // Coot's command palette searches these too
+         if (g_menu_model_get_item_attribute(model, i, "api-function", "s", &api) && api) {
+            c.api_function = api;
+            std::string words = api;
+            for (auto &ch : words) if (ch == '_' || ch == '.') ch = ' ';
+            c.keywords += " " + to_lower(c.api_function) + " " + to_lower(words);
+         }
+         g_free(api);
+         if (c.action != "app.command_search_action" && c.action != "app.command_palette_action" &&
+             !have_command(c.action, c.target))
             commands.push_back(c);
       }
       g_free(action);
@@ -1229,6 +1240,7 @@ std::string tooltip_for(const command_t &c) {
    if (!c.description.empty()) tip = c.description + "\n";
    tip += c.path.empty() ? c.label : c.path + " › " + c.label;
    if (!c.shortcut.empty()) tip += "   —   key: " + c.shortcut;
+   if (!c.api_function.empty()) tip += "\nPython: " + c.api_function + "()";
    return tip;
 }
 
@@ -3607,6 +3619,16 @@ void add_map_look_entries(GtkWidget *box, GtkWidget *pop, int imol) {
    add_menu_heading(box, "Map look");
    add_fn_entry(box, pop, "Mesh", nullptr, [imol] () { map_look(imol, "mesh"); });
    add_fn_entry(box, pop, "Solid surface", nullptr, [imol] () { map_look(imol, "solid"); });
+   {
+      // Coot's per-map "Angle-Dependent Transparency" (also in its Map Properties dialog)
+      bool vdt = graphics_info_t::molecules[imol].do_map_view_dependent_map_transparancy;
+      add_fn_entry(box, pop, std::string(vdt ? "✓ " : "") + "Angle-Dependent Transparency",
+                   "For a see-through solid surface (opacity below 100 %): clearer where the surface faces you, "
+                   "more solid where you see it edge-on, so the outline of the density stands out. "
+                   "Same as the switch in Coot's Map Properties.",
+                   [imol, vdt] () { set_map_use_view_dependent_transparency(imol, vdt ? 0 : 1);
+                                     molecules_signature.clear(); graphics_draw(); }); // rebuild: the menu shows the tick
+   }
    add_fn_entry(box, pop, "Thin lines (all maps)", nullptr, [imol] () { map_look(imol, "thin"); });
    add_fn_entry(box, pop, "Normal lines (all maps)", nullptr, [imol] () { map_look(imol, "normal"); });
    add_fn_entry(box, pop, "Thick lines (all maps)", nullptr, [imol] () { map_look(imol, "thick"); });
@@ -6051,6 +6073,9 @@ void coot_plus_show_command_search() {
 
 
 void coot_plus_setup_ui(GtkApplication *application) {
+
+   // one search box: Coot's command palette ("/" key, About > Search Menus...) opens the Coot+ search
+   coot_plus_command_search_hook = +[] () -> bool { coot_plus_show_command_search(); return true; };
 
    coot_plus_app = application;
    build_command_registry(application);

@@ -30,13 +30,11 @@
 #include "geometry/residue-and-atom-specs.hh"
 #include "stereo-eye.hh"
 #include <ctime>
+#include <deque>
 #ifndef HAVE_STRING
 #define HAVE_STRING
 #include <string>
 #endif // HAVE_STRING
-
-#include <deque>
-#include <iomanip>
 
 #include "compat/coot-sysdep.h"
 
@@ -2151,6 +2149,9 @@ public:        //                      public
 			bool save_conect_records=0);
    int quick_save(); // save to default file name if has unsaved changes.  Return non-zero on problem.
    std::string stripped_save_name_suggestion(); // sets coot_save_index maybe
+   std::string save_map_name_suggestion() const; // for a map that was created in this session
+   int save_map(const std::string &file_name); // write a CCP4 map and update the save state commands.
+                                               // Return 0 on success.
    int Have_unsaved_changes_p() const;
    bool Have_modifications_p() const { return history_index > 0 ? 1 : 0;}
    bool Have_redoable_modifications_p() const ;
@@ -3294,6 +3295,10 @@ public:        //                      public
    float worm_tube_radius; // default 1.0
    float get_worm_tube_radius() const { return worm_tube_radius; }
    void set_worm_tube_radius(float wtr) { worm_tube_radius = wtr; }
+   // radius of the helix cylinders in the "Bendix" and "Tube (helices)" representations
+   float tube_helix_radius; // default 2.5
+   float get_tube_helix_radius() const { return tube_helix_radius; }
+   void set_tube_helix_radius(float thr) { tube_helix_radius = thr; }
 
    Material material_for_maps;
    Material material_for_models;
@@ -3885,6 +3890,18 @@ public:        //                      public
    void set_material_in_molecules_as_mesh(const Material &material) {
       model_molecule_meshes.set_material(material);
    }
+   // glycoblocks: 3D-SNFG shapes for the carbohydrates (ported from Moorhen). They are drawn
+   // independently of the bonds (draw_it), and remade with the bonds when the model changes.
+   model_molecule_meshes_t glycoblocks_meshes;
+   bool draw_glycoblocks_flag;
+   bool glycoblocks_3d_flag; // 3D-SNFG style: cubes and spheres rather than flat blocks
+   float glycoblocks_scale_factor; // block size, relative to Moorhen's
+   glm::vec4 glycoblocks_colour; // r < 0: SNFG colours
+   void make_glycoblocks();
+   void set_show_glycoblocks(bool state);
+   void set_glycoblocks_3d(bool state);
+   void set_glycoblocks_scale_factor(float sf);
+   void set_glycoblocks_colour(const glm::vec4 &col);
    Mesh molecule_as_mesh_rama_balls;
    Mesh molecule_as_mesh_rota_dodecs;
    // pass this function to the Mesh so that we can determine the atom and bond colours
@@ -3941,6 +3958,8 @@ public:        //                      public
    std::vector<glm::vec3> unhappy_atom_marker_positions;
 
    bool read_nef(const std::string &file_name);
+
+   bool do_map_view_dependent_map_transparancy;
 
    float gaussian_surface_opacity;
 

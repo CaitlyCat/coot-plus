@@ -515,8 +515,10 @@ int clashes_with_symmetry(int imol, const char *chain_id, int res_no, const char
 //! to a set of 3x3 matrices. Call this function for every matrix.
 //! The matrix and origin are appended to the molecule's list of molecular
 //! symmetry matrices and the graphics are redrawn. The coordinates are not
-//! changed. (Note: the drawing of the molecular symmetry copies is currently
-//! disabled in the molecule's drawing code.)
+//! changed.
+//!
+//! Not implemented: the matrices are stored but the molecular symmetry copies
+//! are not drawn, so this function has no visible effect.
 //!
 //! @param imol the model molecule index
 //! @param r_00 rotation matrix element (row 0, column 0)
@@ -544,11 +546,15 @@ void add_molecular_symmetry(int imol,
 //! Often molecular symmetry is described using MTRIX cards in a PDB file header.
 //! Use this function to extract and apply such molecular symmetry: each
 //! MTRIX operator is added as for add_molecular_symmetry(), with the
-//! origin set to half of the MTRIX translation.
+//! origin set to half of the MTRIX translation (which is the position of
+//! the rotation axis only for a 2-fold).
+//!
+//! Not implemented: the operators are stored but the molecular symmetry
+//! copies are not drawn, so this function has no visible effect.
 //!
 //! @param imol the model molecule index
 //! @param file_name the PDB file containing the MTRIX records
-//! @return currently always 0
+//! @return 1 if imol is a valid model molecule, 0 otherwise
 int add_molecular_symmetry_from_mtrix_from_file(int imol, const std::string &file_name);
 
 //! \brief Add molecular symmetry from the MTRIX records of the molecule's own file
@@ -557,8 +563,11 @@ int add_molecular_symmetry_from_mtrix_from_file(int imol, const std::string &fil
 //! specify the PDB file name: the file from which molecule \c imol was read
 //! is used (if it still exists).
 //!
+//! Not implemented: the operators are stored but the molecular symmetry
+//! copies are not drawn, so this function has no visible effect.
+//!
 //! @param imol the model molecule index
-//! @return currently always 0
+//! @return 1 if imol is a valid model molecule, 0 otherwise
 int add_molecular_symmetry_from_mtrix_from_self_file(int imol);
 
 //! \}
@@ -833,7 +842,7 @@ void show_map_partition_by_chain_dialog();
 //! \brief partition a map by the chains of a model - use this function for scripting
 //!
 //! The map is split into one new map for each chain of the model
-//! (labelled "Partioned map Chain <chain-id>"). The original map is then undisplayed.
+//! (labelled "Partitioned map Chain <chain-id>"). The original map is then undisplayed.
 //! This blocks until the partitioning is complete.
 //!
 //! @param imol_map the map molecule index
@@ -948,8 +957,7 @@ PyObject *export_molecule_as_x3d(int imol);
 //!
 //! @param imol the map or model molecule index
 //! @param file_name the output file name
-//! @return true on success for a map molecule; false on failure (note: the
-//!         model-molecule export currently always returns false)
+//! @return true on success, false on failure
 bool export_molecule_as_obj(int imol, const std::string &file_name);
 
 //! \brief export a molecule as a glTF file
@@ -1167,6 +1175,8 @@ void add_toolbar_subprocess_button(const std::string &button_label,
 //! \name Add an Atom
 //! \{
 //! \brief add an atom at the rotation centre to the active molecule
+
+//! Add an atom at the rotation centre to the active molecule
 //!
 //! The atom is added to the molecule of the current active atom (as for
 //! "Place Atom at Pointer"), at the current rotation centre. The target
@@ -1186,6 +1196,7 @@ void add_an_atom(const std::string &element);
 /*  ------------------------------------------------------------------------ */
 //! \name Nudge the B-factors
 //! \{
+
 //! \brief change the B-factors of the atoms of the specified residue by a (small) amount
 //!
 //! \c amount is added to the B-factor of every atom in the residue (it can
@@ -1228,6 +1239,7 @@ void hiranuma_inversion(int imol);
 /*  ------------------------------------------------------------------------ */
 //! \name Merge Fragments
 //! \{
+
 //! \brief merge fragments
 //!
 //! Each fragment is presumed to be in its own chain. The atom selections
@@ -1259,7 +1271,8 @@ void delete_chain(int imol, const std::string  &chain_id);
 //! \brief delete the side chains in the chain
 //!
 //! All atoms other than the main-chain atoms and CB are deleted from every
-//! residue in the chain (in all models). A backup is made first.
+//! amino acid residue in the chain (in all models). Residues without N and
+//! CA atoms (e.g. ligands and waters) are left alone. A backup is made first.
 //!
 //! @param imol the model molecule index
 //! @param chain_id the chain id
@@ -1273,6 +1286,7 @@ void delete_sidechains_for_chain(int imol, const std::string &chain_id);
 /*  ------------------------------------------------------------------------ */
 //! \name Execute Refmac
 //! \{
+
 //! \brief execute refmac
 //!
 //! This builds and runs (via the Python layer) a call to
@@ -1971,8 +1985,9 @@ SCM residue_name_scm(int imol, const char* chain_id, int resno, const char *ins_
 //! Calculates the fragment info of the chains of imol (and, if
 //! screen_output_also is non-zero, writes it to the terminal).
 //!
-//! @return currently this always returns scheme false (\#f) - the
-//!         fragment info is not converted to a scheme value.
+//! @return a list of (chain-id fragment-ranges) where fragment-ranges
+//!         is a list of (start-residue-spec end-residue-spec), or
+//!         scheme false (\#f) if imol is not a valid model molecule.
 SCM chain_fragments_scm(int imol, short int screen_output_also);
 
 //! \brief generate a molecule from an s-expression
@@ -2202,6 +2217,24 @@ PyObject *molecule_to_pdb_string_py(int imol);
 //! \endcode
 PyObject *residue_info_py(int imol, const char* chain_id, int resno, const char *ins_code);
 
+//! \brief Get the atoms whose occupancy is not 1 (Python interface)
+//!
+//! Atoms in the first model whose occupancy differs from 1.0 by more than 0.001 -
+//! this includes atoms with zero occupancy and atoms with occupancy greater than 1.
+//!
+//! @param imol Model molecule index
+//! @return a list of items \c [[chain_id, res_no, ins_code, atom_name, alt_conf], occupancy],
+//!         in the order of the atoms in the molecule. The list is empty if all the
+//!         occupancies are 1. Returns False if \p imol is not a valid model molecule.
+//!
+//! Example usage:
+//! \code{.py}
+//! for spec, occ in coot.atoms_with_partial_occupancy_py(0):
+//!     chain_id, res_no, ins_code, atom_name, alt_conf = spec
+//!     print(f"{chain_id} {res_no}{ins_code} {atom_name} {alt_conf!r} occ={occ:.2f}")
+//! \endcode
+PyObject *atoms_with_partial_occupancy_py(int imol);
+
 //! \brief get the residue name
 //!
 //! @param imol Model molecule index
@@ -2227,8 +2260,9 @@ PyObject *residue_centre_from_spec_py(int imol,
 //! Calculates the fragment info of the chains of imol (and, if
 //! screen_output_also is non-zero, writes it to the terminal).
 //!
-//! @return currently this always returns False - the fragment info is
-//!         not converted to a Python value.
+//! @return a list of [chain_id, fragment_ranges] where fragment_ranges
+//!         is a list of [start_residue_spec, end_residue_spec], or
+//!         False if imol is not a valid model molecule.
 PyObject *chain_fragments_py(int imol, short int screen_output_also);
 
 #ifdef USE_PYTHON
@@ -2433,6 +2467,12 @@ PyObject *get_intermediate_atoms_bonds_representation();
 
 #endif // USE_PYTHON
 
+//! set the intermediate_atoms_bond_width_scale_factor
+void set_intermediate_atoms_bond_width_scale_factor(float sf);
+
+//! get the intermediate_atoms_bond_width_scale_factor
+float get_intermediate_atoms_bond_width_scale_factor();
+
 //! \brief return the continue-updating-refinement-atoms state
 //!
 //! @return 0 means off, 1 means on.
@@ -2446,6 +2486,7 @@ int get_continue_updating_refinement_atoms_state();
 
 //! \name Status bar string functions
 //! \{
+
 //! \brief return a description of the given atom for the status bar (internal)
 //!
 //! @param atom_index the index of the atom in the atom selection of imol
@@ -2469,17 +2510,28 @@ std::string atom_info_as_text_for_statusbar(int atom_index, int imol,
 //! \name Refinement with specs
 //! \{
 
+#ifdef USE_GUILE
 //! \brief return the specs of all the residues, each spec prefixed by the serial number
 //!
 //! The serial number is the (0-based) index of the residue in its chain.
 //!
-//! Python returns a list of [serial_number, chain_id, res_no, ins_code];
+//! @param imol the model molecule index
+//!
+//! @return
 //! scheme returns a list of (serial-number \#t chain-id res-no ins-code).
 //! False (\#f) is returned if imol is not a valid model molecule.
-#ifdef USE_GUILE
 SCM all_residues_with_serial_numbers_scm(int imol);
 #endif
 #ifdef USE_PYTHON
+//! \brief return the specs of all the residues, each spec prefixed by the serial number
+//!
+//! The serial number is the (0-based) index of the residue in its chain.
+//!
+//! @param imol the model molecule index
+//!
+//! @return
+//! Python returns a list of [serial_number, chain_id, res_no, ins_code];
+//! False (\#f) is returned if imol is not a valid model molecule.
 PyObject *all_residues_with_serial_numbers_py(int imol);
 #endif
 
@@ -2632,7 +2684,10 @@ PyObject *accept_moving_atoms_py();
 #ifdef USE_PYTHON
 //! \brief register a Python function to be run after the intermediate atoms have moved
 //!
-//! Note: currently the function is stored but not called.
+//! Not implemented: the function is stored but it is never called, so
+//! registering a hook has no effect.
+//!
+//! @param function_name the Python function (a callable, not the name of one)
 void register_post_intermediate_atoms_moved_hook(PyObject *function_name);
 #endif
 
@@ -2740,7 +2795,9 @@ int morph_fit_by_secondary_structure_elements(int imol, const std::string &chain
 //!        (non-hydrogen) atom are flagged. A negative value disables this test.
 //! @param max_dist waters further than this (in Å) from their nearest
 //!        (non-hydrogen) atom are flagged. A negative value disables this test.
-//! @param part_occ_contact_flag if non-zero, the distance tests are skipped
+//! @param part_occ_contact_flag if non-zero, atoms with partial occupancy
+//!        (e.g. alternate conformations) are ignored in the min_dist
+//!        (close contact) test (OR mode only)
 //! @param zero_occ_flag if non-zero, waters with zero occupancy are excluded
 //!        from the distance tests
 //! @param logical_operator_and_or_flag 0 means combine the criteria with
@@ -2910,7 +2967,8 @@ void set_logging_level(const std::string &level);//!
 //!
 //! The tree (rooted at an ASN, if there is one) is constructed from the
 //! pyranose and ASN residues linked to the given residue.
-//! Note: currently the tree is constructed, but not actually printed.
+//! The tree is written to standard output, one residue per line with the
+//! type of its link to its parent. The root is the most indented.
 //!
 //! @param imol the model molecule index
 //! @param chain_id the chain id
@@ -2946,6 +3004,7 @@ add_named_glyco_tree(int imol, int imol_map, const std::string &glycosylation_na
 /*  ----------------------------------------------------------------------- */
 //! \name Variance Map
 //! \{
+
 //! \brief Make a variance map, based on the grid of the first map.
 //!
 //! A new map molecule called "variance-map" is created. Invalid map
@@ -3348,13 +3407,14 @@ int cootaneer_py(int imol_map, int imol_model, PyObject *atom_in_fragment_atom_s
 
 //! \name Sequence from Map
 //! \{
+
 //! \brief guess the sequence of a fragment from the side-chain density
 //!
 //! Use the map to estimate the sequence - you will need a decent map
 //!
 //! If a sequence is found, the residues in the range are mutated to that
-//! sequence and then the rotamers of the residues in the chain are
-//! auto-fitted (using the refinement map).
+//! sequence and then the rotamers of the residues in the range are
+//! auto-fitted (using imol_map).
 //!
 //! @param imol the model molecule index
 //! @param chain_id the chain id
@@ -3849,6 +3909,20 @@ void set_model_goodselliness(float pastelization_factor);
 //! @param wtr the worm tube radius in Angstroms (the molecule default is 1.0)
 void set_worm_tube_radius(int imol, float wtr);
 
+//! \brief set the tube helix radius
+//!
+//! Sets the radius of the helix cylinders used for the "Bendix" and
+//! "Tube (helices)" representations of the given model molecule. Does
+//! nothing if \c imol is not a valid model molecule or if \c thr is not
+//! positive.
+//!
+//! This needs to be set \e before the representation is calculated - it
+//! doesn't do post-processing.
+//!
+//! @param imol the model molecule index
+//! @param thr the helix cylinder radius in Angstroms (the molecule default is 2.5)
+void set_tube_helix_radius(int imol, float thr);
+
 //! \brief set the fresnel colour for a map
 //!
 //! Does nothing if \p imol is not a valid map molecule. The fresnel effect
@@ -3914,11 +3988,6 @@ void set_use_simple_lines_for_model_molecules(short int state);
 //!
 //! @param z the in-focus depth in depth-buffer units (0 to 1, default 0.15)
 void set_focus_blur_z_depth(float z);
-
-//! \brief set use depth blur
-//!
-//! @param state 1 to turn on depth-of-field blur, 0 to turn off
-void set_use_depth_blur(short int state);
 
 //! \brief set focus blur strength
 //!
@@ -4768,7 +4837,9 @@ PyObject *map_to_model_correlation_stats_py(int imol,
 //! run of \p n_residue_per_residue_range consecutive residues, the correlation
 //! between the observed map and a map calculated from the model is computed
 //! (excluding grid points that are also covered by residues outside the run) and
-//! reported against the middle residue of the run.
+//! reported against the middle residue of the run. The grid points used are those
+//! within 2.8 Å of the atoms of the run. Runs that include waters, nucleotides or
+//! HETATM residues are skipped.
 //!
 //! @param imol Model molecule number
 //! @param chain_id Chain identifier (e.g., "A", "B")
@@ -4776,16 +4847,23 @@ PyObject *map_to_model_correlation_stats_py(int imol,
 //! @param n_residue_per_residue_range Number of residues per analysis window:
 //!        - Use 1 for per-residue statistics (most common)
 //!        - Use 3 for smoothed statistics over 3-residue windows
-//! @param exclude_mainchain_NOC_flag Whether to split off the backbone:
+//! @param exclude_mainchain_NOC_flag Whether to split off the main chain:
 //!        - 0: use all grid points; the first list has the all-atom statistics and
-//!          the second list has empty statistics (n_points = 0)
-//!        - 1: grid points within 1.8 Å of a backbone N, C, O (or H) atom go into the
-//!          first list (i.e. it is then main-chain statistics) and the rest go into the
-//!          second (side-chain) list
+//!          the second list has empty statistics (n_points = 0, correlation nan)
+//!        - 1: the split is made by atom, not by grid point: the grid points around atoms
+//!          that lie within 1.8 Å of a main-chain N, C, O or H atom (i.e. N, C, O, H and
+//!          also CA, and the CD of proline) go into the first list (which is then
+//!          main-chain statistics) and the grid points around all other atoms (CB onwards)
+//!          go into the second (side-chain) list
 //!
 //! @return a list of two lists \c [first_stats, sidechain_stats]. Each is a list of items
 //!         \c [residue_spec, [n_points, correlation]] where residue_spec is
-//!         \c [chain_id, res_no, ins_code]. Both lists are empty if \p imol or \p imol_map is not valid.
+//!         \c [chain_id, res_no, ins_code]; the items are sorted by residue spec.
+//!         Both lists are empty if \p imol or \p imol_map is not valid.
+//!
+//! n_points is the number of atom/grid-point contributions: a grid point that is within
+//! 2.8 Å of several atoms is counted once for each of them (and, with
+//! \p exclude_mainchain_NOC_flag = 1, it may be counted in both lists).
 //!
 //! If the residue does not have a side-chain then the number of grid points may be 0 and the
 //! correlation is then nan.
@@ -5005,20 +5083,26 @@ map_to_model_correlation_stats_per_residue(int imol,
 //! residues; the correlation of the model-calculated map with \p imol_map over each
 //! window is reported against the middle residue of that window. Windows that
 //! include waters, nucleotides or HETATM residues are skipped. The atom mask radius
-//! is 2.8 Å (and 1.8 Å around the main-chain N, O and C atoms when they are excluded).
+//! is 2.8 Å; a grid point within that radius of several atoms is counted once for each
+//! of them.
 //!
 //! @param imol the model molecule index
 //! @param chain_id the chain id (e.g. "A")
 //! @param imol_map the map molecule index
 //! @param n_residue_per_residue_range the number of residues per window (e.g. 1, 3 or 5)
-//! @param exclude_NOC_flag if non-zero, also calculate side-chain statistics (excluding
-//!        grid points near the main-chain N, O and C atoms)
+//! @param exclude_NOC_flag if non-zero, split the statistics into main-chain and
+//!        side-chain. The split is made by atom: the grid points around atoms that lie
+//!        within 1.8 Å of a main-chain N, C, O or H atom (i.e. N, C, O, H, CA and the
+//!        CD of proline) are main-chain, the grid points around the other atoms are
+//!        side-chain.
 //!
 //! @return a pair of maps from (middle) residue spec to
 //!         coot::util::density_correlation_stats_info_t:
-//!         - first: all-atom statistics
+//!         - first: all-atom statistics if \p exclude_NOC_flag is zero, main-chain
+//!           statistics otherwise
 //!         - second: side-chain statistics (only filled with data when
-//!           \p exclude_NOC_flag is set, otherwise the entries have \c n = 0)
+//!           \p exclude_NOC_flag is set, otherwise the entries have \c n = 0 and the
+//!           correlation is nan)
 //!
 //!         Both maps are empty if \p imol or \p imol_map is not valid.
 //!
@@ -5082,8 +5166,9 @@ map_to_model_correlation_stats_per_residue_scm(int imol,
 //!
 //! See map_to_model_correlation_stats_per_residue_range() for the parameters.
 //!
-//! @return a list of two lists (all-atom, side-chain) whose items are
-//!         (residue-spec (n correlation)), in residue-spec order.
+//! @return a list of two lists (all-atom or main-chain, side-chain) whose items are
+//!         (residue-spec (n correlation)), in residue-spec order. The first list
+//!         is main-chain statistics if \p exclude_NOC_flag is non-zero.
 SCM map_to_model_correlation_stats_per_residue_range_scm(int imol, const std::string &chain_id, int imol_map,
                                                          unsigned int n_residue_per_residue_range,
                                                          short int exclude_NOC_flag);

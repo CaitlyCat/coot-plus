@@ -35,6 +35,7 @@
 #include "superpose-results.hh"
 #include "lsq-results.hh"
 #include "coot-utils/simple-mesh.hh"
+#include "coot-utils/textured-mesh.hh"
 #include "coot-utils/texture-as-floats.hh"
 #include "phi-psi-prob.hh"
 #include "instancing.hh"
@@ -1455,6 +1456,14 @@ public:
    void set_bespoke_carbon_atom_colour(int imol, const coot::colour_t &col);
 
    //! Update float parameter for MoleculesToTriangles molecular mesh
+   //!
+   //! As well as the MoleculesToTriangles parameters (e.g. "ribbonStyleHelixWidth"),
+   //! "tubesStyleHelixRadius" sets the radius (in Angstroms, default 2.5) of the helix
+   //! cylinders in the "Tubes" style of get_molecular_representation_mesh().
+   //!
+   //! @param imol is the model molecule index
+   //! @param param_name is the name of the parameter
+   //! @param value is the new value
    void M2T_updateFloatParameter(int imol, const std::string &param_name, float value);
 
    //! Update int parameter for MoleculesToTriangles molecular mesh
@@ -2665,6 +2674,19 @@ public:
    //! @return 1 on a successful move, 0 on failure.
    int mutate(int imol, const std::string &cid, const std::string &new_residue_type);
 
+   //! Mutate the base of a nucleotide (DNA or RNA)
+   //!
+   //! The sugar-phosphate backbone is kept; the new base is least-squares fitted onto the ring
+   //! atoms of the current base.
+   //!
+   //! @param imol is the model molecule index
+   //! @param cid is the residue selection CID e.g "//A/15" (residue 15 of chain A)
+   //! @param new_base_type is the new base, e.g. "A", "C", "G", "T", "U" or "DA", "DC", "DG", "DT".
+   //!        If the residue is DNA then "C" (say) is converted to "DC".
+   //!
+   //! @return 1 on a successful mutation, 0 on failure.
+   int mutate_base(int imol, const std::string &cid, const std::string &new_base_type);
+
    //! Rotate last chi angle of the side chain by 180 degrees
    //!
    //! @param imol is the model molecule index
@@ -3640,7 +3662,9 @@ public:
    //! @param outlier_sigma_level typical value is 0.8
    //! @param min_dist typical value is 2.3
    //! @param max_dist typical value is 3.5
-   //! @param ignore_part_occ_contact_flag typical value is False
+   //! @param ignore_part_occ_contact_flag if True, atoms with partial occupancy
+   //!        are ignored in the min_dist (close contact) test.
+   //!        Typical value is False
    //! @param ignore_zero_occ_flag typical value is False
    //!
    //! @return a vector/list of atom specifiers
@@ -4131,6 +4155,17 @@ public:
    //!
    //! @return a `simple_mesh_t` from the given file.
    coot::simple_mesh_t make_mesh_from_gltf_file(const std::string &file_name);
+
+   //! Read a mesh with a texture from a glTF file
+   //!
+   //! The vertex colours of the mesh tint (multiply) the texture.
+   //! If the file does not exist, it is looked for in the glTF directory of Coot's package data,
+   //! so "lemon.glb" will read the lemon.
+   //!
+   //! @param file_name is the glTF file name (.gltf or .glb)
+   //!
+   //! @return a `textured_mesh_t` from the given file. On failure, the mesh has no vertices.
+   coot::textured_mesh_t make_textured_mesh_from_gltf_file(const std::string &file_name);
 
    //! Get octahemisphere
    //!

@@ -333,3 +333,338 @@ Minimum that delivers most of the value: Tier 1 flat MRU *with remembered MTZ
 columns* — self-contained, and it kills the re-prompting annoyance. Tier 2 is
 the bigger conceptual win but is low-risk once the Tier 1 metadata format can
 carry a "this entry is a session" variant.
+
+## Edit Backbone Torsions Cancel button does not clear the moving atoms
+
+Low priority.
+
+`on_edit_backbone_torsion_cancel_button_clicked()` (src/glade-callbacks.cc)
+has a comment saying that `clear_moving_atoms_object()` is "done as part of
+window destroy callback", but the button only hides the dialog, so the dialog
+is never destroyed and the moving atoms are never cleared. The other call it
+makes, `destroy_edit_backbone_rama_plot()`, ends up in
+`graphics_info_t::destroy_edit_backbone_rama_plot()` (src/graphics-info.cc),
+which is an empty function.
+
+A window-manager close does clear them: since 2026-11-01 that goes through
+`on_edit_backbone_torsions_dialog_close_request()`, which calls
+`clear_moving_atoms_object()` and hides the dialog (the old `destroy` handler
+became a `close-request` handler so the builder dialog can be reopened).
+
+Fix: call `clear_moving_atoms_object()` in the Cancel callback, matching
+`on_edit_chi_angles_cancel_button_clicked()`, which calls
+`clear_up_moving_atoms()`.
+
+## Helix placement scoring (ligand/helix-placement.cc)
+
+Found 2026-11-13 while reading
+`coot::helix_placement::place_alpha_helix_near_kc_version()`, the function
+behind `place_helix_here()`.
+
+### Changed 2026-11-13, not yet compiled or tested
+
+- `score_helix_position()` and `decompose_helix_by_cbeta()` looped with
+  `ires < max_residue_number()`, which skipped the last residue
+  (`max_residue_number()` is inclusive, see mini-mol/mini-mol.hh). Both now use
+  `<=`.
+- `score_helix_position()` now samples with
+  `coot::util::density_at_point_by_linear_interpolation()` instead of the cubic
+  `density_at_point()`.
+
+Both changes shift the scores a little, and the cut-offs that use them were
+tuned with the old behaviour: the `final_score < 0` rejection, the CB
+mean/stddev test (`descrimination_ratio` 0.5), and the "Reverse" helix
+trimming (the 2.0 and 2.5 factors). `score_helix_position()` is also the
+scorer in `optimize_rotation_fit()`, `place_alpha_helix_near()`, `fit_strand()`
+and `find_strand_candidates_by_shift_sampling()`, so helix and strand placement
+both need re-testing.
+
+### Still open
+
+- **The score is a sum, not a mean.** `score_helix_position()` adds up
+  occupancy-weighted density over all atoms, so it scales with the number of
+  residues. Scores for the 20-residue and 9-residue attempts in
+  `place_helix_here()` are not comparable, and neither are scores before and
+  after `trim_and_grow()`. Dividing by the summed occupancy would fix that, but
+  the callers that compare against absolute values need checking first.
+- **Mixed interpolation.** `score_atoms()` (the CB test) and `score_residue()`
+  (the end trimming in `trim_end()`) still use cubic interpolation, while
+  `score_helix_position()` is now linear. Decide whether they should follow.
+- **Comment disagrees with the code.** In
+  `place_alpha_helix_near_kc_version()` the comment says the centre movement is
+  limited to 1.5A, but `max_allowed_move` is 1.0.
+
+## Implement the post-intermediate-atoms-moved hook
+
+`register_post_intermediate_atoms_moved_hook()` (`src/c-interface-refine.cc`,
+declared in `src/cc-interface.hh`) stores a Python function that is meant to be
+run when the intermediate (moving) atoms have moved. It has never worked, and
+the header doc now says that it is not implemented. Nothing in `python/` or
+`scheme/` registers a hook.
+
+What is missing, all in `src/graphics-info-intermediate.cc`:
+
+- **The call site.** The call in `drag_refine_refine_intermediate_atoms()` is commented out with "put this somewhere else (after the refinement has finished)". That dates from the "Threaded refinement works" commit (0d87edebe).
+- **The runner.** `run_post_intermediate_atoms_moved_hook_maybe()` builds the intermediate-atoms bonds representation and stops at "do something with python". It never calls the stored function.
+- **Reference counting.** `graphics_info_t::register_post_intermediate_atoms_moved_hook()` stores the `PyObject *` without `Py_INCREF` (and does not `Py_XDECREF` a previous hook), so a lambda passed in can be freed while Coot still holds the pointer. It should also check `PyCallable_Check()` and drop its debug print.
+
+To decide before implementing:
+
+- **What the function is called with:** no arguments, or the bonds representation that the runner already builds.
+- **When it is called:** after each refinement step is drawn, or once when the refinement finishes.
+
+The call must be made on the main thread (with the GIL), so the place for it is
+where the intermediate atoms are redrawn after a refinement step, not inside
+the refinement thread. Check the result of the call for a Python error and
+print it, so that a broken hook does not fail silently.
+
+## Draw molecular symmetry
+
+`add_molecular_symmetry()`, `add_molecular_symmetry_from_mtrix_from_file()` and
+`add_molecular_symmetry_from_mtrix_from_self_file()` (`src/cc-interface.hh`),
+and the `REMARK 350 BIOMT` reader that runs when a model is read
+(`molecule_class_info_t::add_molecular_symmetry_matrices()`,
+`src/molecule-class-info-ncs.cc`), all fill
+`molecule_class_info_t::molecular_symmetry_matrices`. Nothing reads it, so
+nothing is drawn. The header docs now say so.
+
+- **Drawing.** The only drawing code is the `display_molecular_symmetry` lambda in `molecule_class_info_t::display_symmetry_bonds()` (`src/molecule-class-info.cc`). That is immediate-mode OpenGL (`glBegin(GL_LINES)`), its call is commented out, and `display_symmetry_bonds()` itself is never called. The current renderer draws crystal symmetry with `molecule_class_info_t::draw_symmetry()` and `Mesh::draw_symmetry()` and has no molecular-symmetry path. It needs one: a mesh per operator, or instanced drawing of the molecule's bonds mesh with one transformation per operator. The old code gave each copy its own colour.
+- **The MTRIX origin.** `add_molecular_symmetry_from_mtrix_from_file()` (`src/molecule-class-info-molecular-symmetry.cc`) stores half of the MTRIX translation as the origin. For an operator `x' = Rx + t` the fixed point `o` satisfies `(I - R) o = t`, and `o = t/2` holds only for a 2-fold. The general case needs a least-squares solve, because `I - R` is singular along the rotation axis. A screw component cannot be expressed as a rotation about a point at all, so storing the full `clipper::RTop_orth` for each operator (as MTRIX and BIOMT give it) would be simpler and more general than matrix-plus-origin.
+- **Remove the old code** (`display_symmetry_bonds()`) when the new drawing is in place.
+
+## Review the nomenclature-errors prompt on reading a model
+
+`show_fix_nomenclature_errors_gui()` (`src/c-interface-build-gui.cc`) returns at
+once ("this function crashes, I don't know why - fix later", from the GTK3 port
+in 2019). The dialog that it would show, `fix_nomenclature_errors_dialog` with
+`nomenclature_errors_vbox`, exists only in `coot-gtk2.glade`; no GTK4 `.ui`
+file has it, so removing the `return` would not bring it back.
+
+The consequence: `set_nomenclature_errors_on_read()` defaults to "prompt", and
+the prompt is this function. So by default, when a model with nomenclature
+errors is read, nothing is shown and nothing is corrected. Only "auto-correct"
+does anything. The menu item "Fix Nomenclature Errors..." still works.
+
+First decide whether the dialog is still useful. Then one of:
+
+- **Rebuild it** in `ui/coot.ui`. The OK and Cancel handlers (`on_fix_nomenclature_errors_ok_button_clicked` and `on_fix_nomenclature_errors_cancel_button_clicked` in `src/glade-callbacks.cc`) are still there and would serve it as they are.
+- **Replace it** with a message that gives the number of errors and points to the menu item.
+- **Remove it:** delete the function, the two handlers and the "prompt" mode, and choose what the default mode should then be ("ignore" is what happens now).
+
+## Tidy up the API for Coot 2
+
+The API is not to change for the current release. Coot 2 can change it, and
+these are the things to tidy up then. They were found in the API documentation
+review (November 2026), and each is documented in its header as it behaves now.
+
+### Parameters that are accepted and never used
+
+Either make the parameter do something or remove it.
+
+- `make_link`: `link_name`, `length`.
+- `hole`: `n_runs`, `show_probe_radius_graph_flag`.
+- `map_contours_as_triangles`: `contour_level`.
+- `sharpen_with_gompertz_scaling`: `gompertz_factor`.
+- `handle_read_draw_probe_dots_unformatted`: `show_clash_gui_flag`.
+- `lsq_improve`: `n_res`, `dist_crit`. This one is cheap: `coot::lsq_improve` has `set_n_res_for_frag()` and `set_crit_close()`, and `molecule_class_info_t::lsq_improve()` does not call them. The built-in values are 6 residues and 6 A.
+- `regularize_zone_with_score_py` and `regularize_zone_with_score_scm`: `altconf`.
+- `add_terminal_residue_using_phi_psi`: `residue_type` (an ALA is always built).
+- `make_dots`: `atom_radius_scale`.
+- `monomer_lib_3_letter_codes_matching`: `allow_minimal_descriptions_flag`.
+- `get_symmetry_bonds_colour`: `imol`.
+- `display_pae_from_file_in_a_dialog`: `imol`.
+- `servalcat_refine`: `mask_map` (the `--mask` argument is commented out of the command line in `src/cc-interface-map-utils.cc`).
+
+### Stubs: implement or remove
+
+- `alignment_results_scm` and `alignment_results_py`: return False and nothing else. `molecule_class_info_t::align_on_chain()` could supply the result.
+- `qq_plot_map_and_model_scm/_py`: the body is inside `HAVE_GOOCANVAS`, which a GTK4 build never defines. The calculation (`coot::util::qq_plot_for_map_over_model()`) is still there; it needs somewhere to plot, or it could return the points.
+- `global_phasing_screen`: does its work as a side effect and always returns False.
+- `spherical_density_overlap` (Scheme only): returns `#f` and writes `map-fragment-at-origin.map` into the current directory.
+
+### Functions that do nothing useful
+
+- `deviant_geometry()` and `molecule_class_info_t::find_deviant_geometry()`: marked "Deletable for Coot 2" in the source.
+- The multi-refine toolbar functions (`toolbar_multi_refine_continue()` and the six others in the same block of `src/c-interface.h`): documented as not functional in GTK4 Coot.
+- Setters whose value is never read, each documented as having no effect: `set_cryo_em_refinement`, `set_save_coordinates_in_original_directory`, `set_add_terminal_residue_do_rigid_body_refine`, `set_button_label_for_external_refinement`, `set_add_ccp4i_projects_to_file_dialogs`, `set_file_chooser_overwrite`, `set_filter_fileselection_filenames`, `set_unpathed_backup_file_names`, `set_python_draw_function`, `set_limit_aniso`, `set_show_aniso`, `set_use_stroke_characters`, `set_model_display_radius`.
+
+## Sequence mismatches: chains without a sequence, and repeated assignment
+
+Seen on 2026-11-16 when testing `alignment_mismatches_py()` on
+`tutorial-modern.pdb`. Both come from
+`molecule_class_info_t::residue_mismatches()` or the sequence assignment, not
+from the Python wrapper.
+
+- **A chain with no assigned sequence is reported.** A sequence was assigned to chain A only, with `assign_sequence_from_string()`. The result also had entries for chain B, including "Delete B 94, 95, 96" when the sequence of chain A matched exactly. Find out which sequence chain B is aligned against, and whether that is intended.
+- **Assigning a sequence twice doubles the results.** After a second `assign_sequence_from_string()` for chain A there were four alignments, not two, and the chain B deletions were listed twice. The second sequence seems to be added to the first, not to replace it.
+
+## Implement topological_equivalence_chiral_centres()
+
+`topological_equivalence_chiral_centres(residue_type)` (`src/cc-interface.hh`,
+body in `src/c-interface-ligands.cc`) is a stub: it returns an empty vector, and
+the header doc says so. Nothing calls it.
+
+It is meant to return the atom ids of the chiral centres of a residue type,
+found by topological equivalence analysis of the dictionary: the bonds and the
+elements only, not the chiral restraints that the dictionary lists. An atom is a
+centre if it has four neighbours (or three and an implicit hydrogen) that are
+all topologically different.
+
+- **Where it goes.** The comment on the stub says that a better design would put this in `coot::protein_geometry`, with the API function a thin wrapper.
+- **What is there to build on.** `protein_geometry::filter_chiral_centres()` already removes dictionary chiral restraints that are not real centres (those with more than one hydrogen). With RDKit (enhanced-ligand builds) the dictionary can be made into an RDKit molecule and the centres found from the canonical atom ranks.
+- **A use for it.** Checking the chiral restraints of a dictionary: a centre found here with no chiral restraint, or a restraint on an atom that is not a centre, points to a bad dictionary.
+
+## API documentation bug review: what was not covered
+
+The bugs found while writing the API documentation were fixed on branch
+`fix-api-docs-bugs` (November 2026). `api-docs-bug-list.md` has the entry-by-entry
+record. This is what that work left undone. The larger items have their own
+sections in this file: the post-intermediate-atoms-moved hook, drawing
+molecular symmetry, the nomenclature-errors prompt, the Coot 2 API tidy-up, the
+sequence mismatches and `topological_equivalence_chiral_centres()`.
+
+### Not decided
+
+- `overlap_ligands`: it graph-matches every residue in `imol_ligand`, moves the best one, and deletes all the other residues of `imol_ligand`. Is the deletion intended?
+- `execute_refmac_real`: the Guile branches are guarded by `USE_GUILE_XXX`, which nothing defines, so it always takes the Python path and a build without Python would silently do nothing.
+
+### Fixed but not tested
+
+All of it compiles and installs in the `build-arch-for-claude` sandbox. The tests were headless Python scripts, so these were not run:
+
+- **Anything in the GUI.** In particular the difference-map-peaks dialog with "around the model only" (`only_around_protein_flag`), and the run-state-file dialog.
+- **The Scheme functions.** `model_composition_statistics_scm`, `glyco_tree_scm`, `get_residue_alt_confs_scm`, the Guile branches of `run_state_file()` and `run_state_file_maybe()`, and the 6-item spec in `atom_spec_from_scm_expression`.
+- **The view matrix of `raster3d()`, `povray()` and `renderman()`.** The numbers in the `.r3d` header look right for a 90 degree rotation, but nothing was rendered. It may need transposing.
+- **The FLEV distances.** `fle_view_set_water_dist_max()` and `fle_view_set_h_bond_dist_max()` are now passed to `pli::fle_view_with_rdkit_internal()`, but `fle_view()` opens a dialog and was not run.
+- **`probe_available_p()`** with a real `molprobity.probe` (a dummy executable on the `PATH` was used).
+- **`servalcat_refine`** and anything else that needs an external program.
+- **The chapi build.** `build-chapi-arch-for-claude` was not rebuilt. `pli::fle_view_with_rdkit_internal()` has two new arguments with defaults, so the chapi caller should compile unchanged.
+- **Glycan trees on a real glycoprotein.** `print_glyco_tree()` and `glyco_tree_py()` were run only on a two-residue tree (FUC, NAG), so branches and ASN-rooted trees are untested.
+
+### Known and left
+
+- **`generate_local_self_restraints()` in chapi** (`coot::molecule_t`, `api/coot-molecule-refine.cc`) still clears the extra bond restraints on entry. The desktop version no longer does.
+- **Self restraints accumulate.** A second call of `generate_local_self_restraints()` for the same chain duplicates the Geman-McClure restraints. Accepted for now: clear them first (`delete_all_extra_restraints()`, or `clear_extra_restraints()` in chapi). The fix would be to remove the restraints between atoms of the selection before adding the new ones.
+- **`check_waters_baddies` in AND mode** (`molecule_class_info_t::find_water_baddies_AND()`) still ignores `part_occ_contact_flag`. OR mode uses it.
+- **The run-state-file dialog** (`run_state_file_dialog`) previews the Python state file, but in a build with Guile and Python its OK button runs the Scheme one. It is only reached from `src/scm-boot-guile.cc`.
+- **The desktop `clear_extra_restraints(int imol)`** (`src/c-interface-kk.cc`) is not declared in any header.
+- **`model_composition_statistics_py()`:** the atom overlap score was 0.0 for two of the four test models (those with a residue type that has no dictionary). It is the value that `atom_overlap_score()` gives; find out why. The "good rotamer" cut-off (a probability of 0.3% or more) is a first choice, and C-beta deviation outliers are not counted.
+- **`glyco_tree_t::print()`** indents the root the most and the children less, which reads backwards.
+
+## Dialogs shown without a transient parent (macOS full-screen bug)
+
+On macOS, when the main window is full-screen, a dialog that is mapped before
+it has been made transient for the main window is itself made full-screen, and
+its top row of widgets is off the top of the screen. Seen with the Restraints
+Editor and with Go To Atom (both now fixed); Display Manager, which is made
+transient before it is shown, was fine.
+
+The fix is per-dialog: call `set_transient_for_main_window(dialog)` before the
+`gtk_widget_set_visible(dialog, TRUE)` / `gtk_window_present()`. Where all the
+show paths go through one `wrapped_create_*()` function, put the call there (as
+was done in `wrapped_create_goto_atom_window()`). Also make sure that the
+top-level in the `.ui` file does not have `visible` set to `True` (it is shown
+at builder-load time otherwise) - the Restraints Editor was the only one.
+
+The lists below are from a script pass over `ui/*.ui` and `src/*.cc` (14 Nov
+2026), with the show call for each hit then read by hand. Line numbers are as
+of that date. Only Go To Atom and the Restraints Editor have been confirmed by
+running Coot.
+
+### Shown with no transient parent
+
+Navigation / display:
+
+- `global_map_properties_window` - `create-menu-item-actions.cc:4502`
+- `display_control_window_glade` - `c-interface.cc:6233` (the scripting path,
+  `post_display_control_window()`, only; the button path is fine)
+
+Model building:
+
+- `add_alt_conf_dialog` - `c-interface-build-gui.cc:610`
+- `align_and_mutate_dialog` - `create-menu-item-actions.cc:1368`
+- `change_chain_id_dialog` - `create-menu-item-actions.cc:945`
+- `merge_molecules_dialog` - `c-interface-build-gui.cc:800`
+- `replace_fragment_dialog` - `create-menu-item-actions.cc:1100`
+- `other_model_tools_dialog` - `create-menu-item-actions.cc:3286`
+- `fixed_atom_dialog` - `glade-callbacks-main-window.cc:105`,
+  `glade-callbacks.cc:1026,5805`
+- `pointer_atom_type_dialog` - `c-interface-build-gui.cc:329`
+- `edit_backbone_torsions_dialog` - `graphics-info-gui.cc:2820`
+- `chi_angle_help_dialog` - `glade-callbacks.cc:3120`
+- `residue_type_chooser_window` - `graphics-info-defines.cc:1557,1590`,
+  `c-interface-build-side-chain.cc:661`
+- `nucleic_acid_base_chooser_dialog` - `graphics-info-defines.cc:1554`
+- `undo_molecule_chooser_dialog` - `graphics-info.cc:4519,4586`
+- `recover_coordinates_dialog`, `nothing_to_recover_dialog` -
+  `c-interface-build-gui.cc:645,653`
+
+Baton / skeleton:
+
+- `baton_dialog` - `graphics-info-gui.cc:765`
+- `baton_mode_make_skeleton_dialog` - `graphics-info.cc:3912`
+- `skeleton_dialog` - `graphics-info.cc:3901`
+
+Ligands / waters:
+
+- `find_ligand_many_atoms_dialog` - `c-interface-ligands-gui.cc:680`
+- `new_ligands_info_dialog`, `no_new_ligands_info_dialog` -
+  `c-interface-ligands.cc:1081,1085`
+- `ligand_check_dialog` - `c-interface-ligands-gui.cc:1168`
+- `monomer_search_dialog` - `create-menu-item-actions.cc:559`
+- `find_waters_dialog` - `c-interface-waters-gui.cc:261`
+- `interesting_waters_by_difference_map_check_dialog` -
+  `graphics-info-gui.cc:3437`
+
+Validation / refinement:
+
+- `bad_chiral_volumes_dialog`, `no_bad_chiral_volumes_dialog` -
+  `graphics-info-gui.cc:3619`, `graphics-info.cc:5919`
+- `chiral_restraints_problem_dialog` - `graphics-info.cc:5922`
+- `no_restraints_info_dialog` - `graphics-info-modelling.cc:1513`,
+  `graphics-info-graphs.cc:1442`
+- `download_monomers_dialog` - `graphics-info-modelling.cc:399`
+- `no_cif_dictionary_bonds_dialog` - `graphics-info.cc:514`
+- `rigid_body_refinement_failed_dialog` - `graphics-info-modelling.cc:3213`
+- `add_terminal_residue_finds_none_dialog` - `graphics-info-modelling.cc:3495`
+- `nothing_bad_dialog` - `glade-callbacks.cc:3978`
+- `simple_refmac_dialog` - `simple-refmac.cc:67`
+- `simple_refmac_filechooser_dialog` - `glade-callbacks.cc:6835`
+
+Maps / other:
+
+- `map_partition_by_chain_dialog` - `cc-interface-map-utils.cc:709`
+- `hole_dialog` - `create-menu-item-actions.cc:2034`
+- `phs_info_box` - `cmtz-interface.cc:678`
+- `run_state_file_dialog` - `c-interface.cc:8155`
+
+File choosers:
+
+- `cif_dictionary_filechooser_dialog` - `c-interface-gui.cc:193`
+- `export_map_file_chooser_dialog` - `glade-callbacks.cc:6367`
+- `save_symmetry_coords_filechooser_dialog` - `graphics-info-defines.cc:1974`
+- `save_restraint_chooserdialog` (Restraints Editor "Save") -
+  `restraints-editor.cc:1379`
+
+### Not yet traced
+
+The script found no show call for these, so they need checking by hand:
+`active_map_window`, `aniso_window`, `centre_atom_label_dialog`,
+`check_chiral_volumes_dialog`, `check_waters_diff_map_dialog`,
+`close_molecule_dialog`, `delete_item_dialog`, `doc_urls_dialog`, `fps_window`,
+`hints_dialog`, `lsq_plane_dialog`, `no_symmetry_warning_dialog`,
+`popup_info_window`, `ramachandran_plot_differences_dialog`,
+`read_pdb_recentre_dialog`, `rotation_centre_cube_size_window`,
+`run_refmac_dialog`, `run_refmac_help_dialog`, `run_script_filechooser_dialog`,
+`save_coordinates_filechooser_dialog`, `skeletonization_box_radius_window`,
+`skeletonization_level_window`, `smooth_scroll_window`, `stereo_dialog`,
+`superpose_nonsense_dialog`, `symmetry_controller_dialog`, `zoom_dialog`,
+`single_map_properties_dialog` (own `.ui` file).
+
+### Also unchecked
+
+- The ~42 dialogs that the script passed: it only tested that there is a
+  transient call somewhere in the same function as the show call, not that the
+  call is for that dialog or that it comes before the show.
+- Windows made in code (`gtk_dialog_new()`, `gtk_window_new()`) and dialogs
+  made from Python.

@@ -706,6 +706,8 @@ libcootsumo_la_SOURCES = \
         idles.hh                 \
 	interface.h              \
 	json-rpc.cc              \
+	command-palette.cc       \
+	command-palette.hh       \
 	key-bindings.cc	         \
 	key-bindings.hh	         \
 	manipulation-modes.hh    \
@@ -739,6 +741,8 @@ libcootsumo_la_SOURCES = \
 	model-composition-statistics.hh  \
 	model-molecule-meshes.hh         \
 	model-molecule-meshes.cc         \
+	glycoblocks.hh                   \
+	glycoblocks.cc                   \
 	molecular-triangles-mesh.hh      \
 	molecule-class-info.cc		 \
 	molecule-class-info-alignment.cc \

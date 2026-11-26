@@ -217,6 +217,26 @@ split_very_bent_helices(const std::vector<helix_residues_info_t> &hriv_in) {
    return hriv;
 }
 
+// Are these two residues (adjacent in the chain's residue list) actually linked?
+// Adjacent in the list does not mean adjacent in the chain: there can be missing
+// residues, or fragments that were merged into the same chain - and the coil splines
+// and helix triplets must not be built across such gaps. A peptide CA-CA is 3.8A
+// (2.9A for cis). Residues without a CA (waters, ligands) are not linked to anything.
+static bool
+residues_are_linked(mmdb::Residue *residue_1_p, mmdb::Residue *residue_2_p) {
+
+   // PDBv3 FIXME
+   mmdb::Atom *at_1 = residue_1_p->GetAtom(" CA ");
+   mmdb::Atom *at_2 = residue_2_p->GetAtom(" CA ");
+   if (! at_1) return false;
+   if (! at_2) return false;
+   double dx = at_2->x - at_1->x;
+   double dy = at_2->y - at_1->y;
+   double dz = at_2->z - at_1->z;
+   const double d_crit = 4.5;
+   return (dx * dx + dy * dy + dz * dz) < (d_crit * d_crit);
+}
+
 // getting the coil to match up with the helices is tricky.
 // Let's try doing them both at the same time.
 std::pair<std::vector<helix_residues_info_t>, std::vector<coil_residues_info_t> >
@@ -299,6 +319,15 @@ make_coil_splines_and_helicies(mmdb::Manager *mol, int atom_selection_handle, bo
                   mmdb::Residue *residue_p = chain_p->GetResidue(ires);
                   int res_no = residue_p->GetSeqNum();
 
+                  if (residue_prev_p) {
+                     if (! residues_are_linked(residue_prev_p, residue_p)) {
+                        // chain break: finish the coil here, don't join across the gap
+                        if (! running_coil.is_empty()) coil_runs_of_residues.push_back(running_coil);
+                        running_coil = coil_residues_info_t(chain_id);
+                        residue_prev_p = nullptr;
+                     }
+                  }
+
                   // Is this residue in any of the helices?
                   // If not, then add it to the running coil
                   // (or start a new one using residue_prev_p)
@@ -362,6 +391,16 @@ make_coil_splines_and_helicies(mmdb::Manager *mol, int atom_selection_handle, bo
                mmdb::Residue *residue_prev_p = nullptr;
                for (int ires=0; ires<n_res; ires++) {
                   mmdb::Residue *residue_p = chain_p->GetResidue(ires);
+                  if (residue_prev_p) {
+                     if (! residues_are_linked(residue_prev_p, residue_p)) {
+                        // chain break: finish the helix and coil here, don't join across the gap
+                        if (! running_helix.is_empty()) hriv.push_back(running_helix);
+                        if (! running_coil.is_empty()) coil_runs_of_residues.push_back(running_coil);
+                        running_helix.clear();
+                        running_coil.clear();
+                        residue_prev_p = nullptr;
+                     }
+                  }
                   if (residue_p->SSE == mmdb::SSE_Helix) {
                      if (running_helix.is_empty()) {
                         running_helix = helix_residues_info_t(chain_p->GetChainID());
@@ -477,7 +516,7 @@ make_mesh_for_helical_representation(const std::vector<helix_residues_info_t> &h
    };
 
    auto get_helix_colour = [hsv_to_rgb] (unsigned int ih) {
-      double hue = static_cast<double>(ih) * 0.2695 *  360.0 *  0.1;
+      double hue = fmod(static_cast<double>(ih) * 137.508, 360.0); // golden angle
       double sat = 0.8;
       double val = 0.5;
       glm::vec4 col = hsv_to_rgb(hue, sat, val);
@@ -672,7 +711,8 @@ make_mesh_for_helical_representation(const std::vector<helix_residues_info_t> &h
             clipper::RTop_orth rtop_for_end_end_cap(clipper::RTop_orth::null());
 
             unsigned int n_rings_in_helix = 0;
-            for (unsigned int ihres=0; ihres<helix.residues.size(); ihres++) {
+            // the last 2 residues of the helix can't be the first residue of a triplet
+            for (unsigned int ihres=0; (ihres+2)<helix.residues.size(); ihres++) {
                std::pair<bool, clipper::RTop_orth> rtop_pair = get_rtop(ihres, helix, ref_coords);
                if (rtop_pair.first) {
                   const clipper::RTop_orth &rtop = rtop_pair.second;
@@ -827,7 +867,7 @@ make_mesh_for_straight_helical_representation(const std::vector<helix_residues_i
    };
 
    auto get_helix_colour = [hsv_to_rgb] (unsigned int ih) {
-      double hue = static_cast<double>(ih) * 0.2695 * 360.0 * 0.1;
+      double hue = fmod(static_cast<double>(ih) * 137.508, 360.0); // golden angle
       double sat = 0.8;
       double val = 0.5;
       return hsv_to_rgb(hue, sat, val);
@@ -1038,15 +1078,34 @@ make_mesh_for_coil_representation(const std::vector<coil_residues_info_t> &coils
                                                             const glm::vec3 &p2,
                                                             const glm::vec3 &p3,
                                                             unsigned int n_slices,
-                                                            float radius) {
+                                                            float radius,
+                                                            const glm::vec3 &previous_ring_start_normal) {
 
       std::vector<std::pair<glm::vec3, glm::vec3> > v;
       glm::vec3 v1 = glm::normalize(p2-p1);
       glm::vec3 v2 = glm::normalize(p3-p2);
       glm::vec3 delta = (v2 - v1) * 0.5f;
-      glm::vec3 delta_uv = glm::normalize(delta);
-      glm::vec3 pos_start = p2 + radius *  delta_uv;
       glm::vec3 rotation_ori = v1 + v2;
+      glm::vec3 delta_uv;
+      // The start direction of the ring is the direction of the bend at p2. Where the
+      // path is straight (e.g. the spline through a coil of just 2 residues) there is
+      // no bend: delta is either rounding noise (so the ring gets a random orientation)
+      // or exactly zero (so normalizing it gives NaNs). In that case, carry over the
+      // start direction of the previous ring, or failing that, use any direction
+      // perpendicular to the path.
+      const float no_bend_limit = 1.0e-4f;
+      if (glm::length(delta) > no_bend_limit) {
+         delta_uv = glm::normalize(delta);
+      } else {
+         glm::vec3 axis = glm::normalize(rotation_ori);
+         glm::vec3 perp = previous_ring_start_normal - glm::dot(previous_ring_start_normal, axis) * axis;
+         if (glm::length(perp) < 0.1f) {
+            glm::vec3 arb = (fabsf(axis.x) < 0.9f) ? glm::vec3(1,0,0) : glm::vec3(0,1,0);
+            perp = glm::cross(axis, arb);
+         }
+         delta_uv = glm::normalize(perp);
+      }
+      glm::vec3 pos_start = p2 + radius *  delta_uv;
       glm::vec3 origin(0,0,0);
       // this is the vector to spin around the point on the circle
       for (unsigned int i_slice=0; i_slice<n_slices; i_slice++) {
@@ -1072,8 +1131,12 @@ make_mesh_for_coil_representation(const std::vector<coil_residues_info_t> &coils
             glm::vec3 start_point = fcxx_to_glm(spline_points[i-1]);
             glm::vec3 mid_point   = fcxx_to_glm(spline_points[i]);
             glm::vec3 next_point  = fcxx_to_glm(spline_points[i+1]);
+            // the normal of the first point in a ring is the start direction of that ring
+            glm::vec3 previous_ring_start_normal(0,0,0);
+            if (! rings.empty()) previous_ring_start_normal = rings.back()[0].second;
             std::vector<std::pair<glm::vec3, glm::vec3> > r =
-               get_ring_around_mid_point(start_point, mid_point, next_point, n_slices, radius);
+               get_ring_around_mid_point(start_point, mid_point, next_point, n_slices, radius,
+                                         previous_ring_start_normal);
             rings.push_back(r);
          }
 
@@ -1147,6 +1210,49 @@ make_mesh_for_coil_representation(const std::vector<coil_residues_info_t> &coils
                }
             }
          }
+
+         // flat end caps: a fan from the ring centre. The cap gets its own vertices
+         // (rather than reusing the ring's) so that they have the cap normal, not the
+         // radial tube normal.
+         auto add_flat_cap = [&m, col] (const std::vector<std::pair<glm::vec3, glm::vec3> > &ring,
+                                        const glm::vec3 &outward_normal) {
+            if (ring.size() < 3) return;
+            glm::vec3 centre(0,0,0);
+            for (const auto &point : ring) centre += point.first;
+            centre /= static_cast<float>(ring.size());
+            unsigned int idx_centre = m.vertices.size();
+            m.vertices.push_back(coot::m2t::mesh_vertex_t(centre, outward_normal, col));
+            for (const auto &point : ring)
+               m.vertices.push_back(coot::m2t::mesh_vertex_t(point.first, outward_normal, col));
+            // wind the triangles so that they face outward
+            glm::vec3 cr = glm::cross(ring[0].first - centre, ring[1].first - centre);
+            bool ring_is_ccw = glm::dot(cr, outward_normal) > 0.0f;
+            unsigned int n = ring.size();
+            for (unsigned int i=0; i<n; i++) {
+               unsigned int i_next = (i + 1) % n;
+               if (ring_is_ccw)
+                  m.triangles.push_back(coot::m2t::mesh_triangle_t(idx_centre, idx_centre + 1 + i, idx_centre + 1 + i_next));
+               else
+                  m.triangles.push_back(coot::m2t::mesh_triangle_t(idx_centre, idx_centre + 1 + i_next, idx_centre + 1 + i));
+            }
+         };
+
+         // the plane of the ring is perpendicular to the sum of the unit vectors in and out
+         // of its mid point (c.f. get_ring_around_mid_point())
+         auto ring_axis = [fcxx_to_glm] (const FCXXCoord &c1, const FCXXCoord &c2, const FCXXCoord &c3) {
+            glm::vec3 p1 = fcxx_to_glm(c1);
+            glm::vec3 p2 = fcxx_to_glm(c2);
+            glm::vec3 p3 = fcxx_to_glm(c3);
+            return glm::normalize(glm::normalize(p2-p1) + glm::normalize(p3-p2));
+         };
+
+         if (! rings.empty()) {
+            std::size_t n_sp = spline_points.size();
+            glm::vec3 start_axis = ring_axis(spline_points[0], spline_points[1], spline_points[2]);
+            glm::vec3 end_axis   = ring_axis(spline_points[n_sp-3], spline_points[n_sp-2], spline_points[n_sp-1]);
+            add_flat_cap(rings.front(), -start_axis);
+            add_flat_cap(rings.back(),    end_axis);
+         }
       }
 
       if (true) { // check mesh
@@ -1212,12 +1318,12 @@ make_tubes_representation(mmdb::Manager *mol,
                           unsigned int n_slices_for_coil,
                           int secondaryStructureUsageFlag,
                           const std::string &helix_template_pdb_file_name,
-                          bool straight_helices) {
+                          bool straight_helices,
+                          float radius_for_helices) {
 
    std::cout << "DEBUG:: ---------------- start make_tubes_representation() " << std::endl;
 
    coot::m2t::simple_mesh_t m;
-   float radius_for_helices = 2.5;
    unsigned int n_slices_for_helices = 16;
    helix_residues_info_t::end_cap_style end_cap_style = helix_residues_info_t::end_cap_style::FLAT;
 

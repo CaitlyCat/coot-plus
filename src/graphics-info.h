@@ -780,6 +780,7 @@ public:
 
    static bool validation_graphs_is_docked; // is in main window
    static GtkWidget *validation_graphs_undocked_window;
+   static bool validation_boxes_is_docked; // validation_boxes_vbox is in main window
 
    static short int do_anti_aliasing_flag; // BL feature
    void set_do_anti_aliasing(int state);
@@ -1142,7 +1143,9 @@ public:
 
    void run_post_read_model_hook(int imol); // conditional compilation handled internally
 
-   void update_things_on_move();
+   // is_drag_pan: the move is a mouse-drag pan - if so, the maps are updated only if
+   // active_map_drag_flag is set (otherwise they are updated at the end of the drag)
+   void update_things_on_move(bool is_drag_pan=false);
    void update_things_on_move_and_redraw();
 
 #ifdef DO_RAMA_PLOT
@@ -2755,6 +2758,8 @@ public:
    static float bond_thickness_intermediate_atoms; // white atoms
    void set_bond_thickness_intermediate_atoms(float f);
 
+   // 2026-11-01-PE
+   static float intermediate_atoms_bond_width_scale_factor;
 
    // residue info
    //
@@ -3465,6 +3470,10 @@ public:
                                                           bool do_negative_level_flag,
                                                           bool around_model_only_flag);
    static void hide_vertical_validation_frame_if_appropriate();
+   // show validation_boxes_vbox, either in the main window or in the undocked dialog
+   static void show_validation_boxes_vbox(int min_pane_position);
+   // move validation_boxes_vbox between the main window and validation_boxes_dialog
+   static void set_validation_boxes_is_docked(bool state);
    // the buttons callback for above:
    static void on_diff_map_peak_button_selection_toggled (GtkToggleButton *button,
 							  gpointer         user_data);
@@ -3891,6 +3900,9 @@ string   static std::string sessionid;
 
    // all molecule rotamer score, (depends on private rotamer probability tables)
    coot::rotamer_score_t all_molecule_rotamer_score(int imol) const;
+   // composition, geometry (rmsd bonds and angles) and validation statistics.
+   // A value of -1 means that the statistic could not be calculated.
+   coot::model_composition_stats_t get_model_composition_statistics(int imol);
 
    // update self?
    static bool update_self;
@@ -4290,6 +4302,7 @@ string   static std::string sessionid;
    void set_do_ambient_occlusion(bool s) { shader_do_ambient_occlusion_flag = s; } // caller redraws
 
    static gl_rama_plot_t gl_rama_plot;
+   static float hud_rama_plot_scale; // used when gl_rama_plot is set up at realize
    static void draw_hud_ramachandran_plot(); // OpenGL rama plot
    void clear_gl_rama_plot();  // why not static also?
    static bool draw_gl_ramachandran_plot_flag;    // used for RSR vs translation or rotamers
